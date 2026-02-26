@@ -89,17 +89,19 @@ export default function CrimeMap({ crimes }) {
                     showCoverageOnHover={false}
                     disableClusteringAtZoom={16}
                 >
-                    {crimes.map((crime) => (
-                        <Marker
-                            key={crime.id}
-                            position={[crime.latitude, crime.longitude]}
-                            icon={createCrimeIcon(crime.crime_type)}
-                        >
-                            <Popup className="crime-popup-wrapper" maxWidth={320} minWidth={260}>
-                                <CrimePopup crime={crime} />
-                            </Popup>
-                        </Marker>
-                    ))}
+                    {crimes
+                        .filter((c) => typeof c.lat === 'number' && typeof c.lng === 'number' && isFinite(c.lat) && isFinite(c.lng))
+                        .map((crime) => (
+                            <Marker
+                                key={crime.id}
+                                position={[crime.lat, crime.lng]}
+                                icon={createCrimeIcon(crime.crime_type)}
+                            >
+                                <Popup className="crime-popup-wrapper" maxWidth={320} minWidth={260}>
+                                    <CrimePopup crime={crime} />
+                                </Popup>
+                            </Marker>
+                        ))}
                 </MarkerClusterGroup>
             </MapContainer>
         </div>

@@ -50,6 +50,12 @@ export function useCrimes(filters = {}) {
             const { data, error: queryError } = await query;
 
             if (queryError) throw queryError;
+
+            // Debug: log the first crime object to verify column names
+            if (data?.length > 0) {
+                console.log('[GTATO] First crime object from Supabase:', data[0]);
+            }
+
             setCrimes(data || []);
         } catch (err) {
             console.error('Error fetching crimes:', err);
