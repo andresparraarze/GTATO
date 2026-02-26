@@ -1,0 +1,584 @@
+/* ============================================
+ * GTATO Crime Map — App Styles
+ * Dark-themed, responsive layout
+ * ============================================ */
+
+/* ── App Layout ───────────────────────────── */
+.app {
+  display: flex;
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+  position: relative;
+}
+
+.app__main {
+  flex: 1;
+  position: relative;
+  transition: margin-left 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  margin-left: 340px;
+}
+
+.app__main--expanded {
+  margin-left: 0;
+}
+
+.app__error {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1000;
+  background: rgba(220, 38, 38, 0.9);
+  backdrop-filter: blur(12px);
+  color: #fff;
+  padding: 12px 24px;
+  border-radius: 12px;
+  font-size: 0.875rem;
+  text-align: center;
+  max-width: 480px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.app__error-hint {
+  opacity: 0.7;
+  font-size: 0.75rem;
+  margin-top: 4px;
+}
+
+.app__error-hint code {
+  background: rgba(255, 255, 255, 0.15);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+/* ── Sidebar ──────────────────────────────── */
+.sidebar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 340px;
+  height: 100vh;
+  background: linear-gradient(180deg, #0f1117 0%, #161822 50%, #1a1d2b 100%);
+  border-right: 1px solid rgba(255, 255, 255, 0.06);
+  z-index: 1001;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  transform: translateX(-100%);
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
+}
+
+.sidebar--open {
+  transform: translateX(0);
+}
+
+/* Header */
+.sidebar__header {
+  padding: 28px 24px 20px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.sidebar__logo {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.sidebar__logo-icon {
+  font-size: 1.75rem;
+}
+
+.sidebar__title {
+  font-size: 1.75rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  background: linear-gradient(135deg, #60a5fa, #a78bfa, #f472b6);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.sidebar__subtitle {
+  color: rgba(255, 255, 255, 0.45);
+  font-size: 0.8rem;
+  margin-top: 6px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* Count */
+.sidebar__count {
+  padding: 16px 24px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.sidebar__count-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 0.875rem;
+}
+
+.sidebar__count-number {
+  font-size: 2rem;
+  font-weight: 800;
+  background: linear-gradient(135deg, #60a5fa, #a78bfa);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.sidebar__count-label {
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* Sections */
+.sidebar__section {
+  padding: 20px 24px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.sidebar__section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 14px;
+}
+
+.sidebar__section-title {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.sidebar__select-all {
+  background: none;
+  border: none;
+  color: #60a5fa;
+  font-size: 0.75rem;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+  transition: background 0.2s, color 0.2s;
+}
+
+.sidebar__select-all:hover {
+  background: rgba(96, 165, 250, 0.1);
+  color: #93bbfc;
+}
+
+/* Crime type items */
+.sidebar__types {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sidebar__type-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background 0.2s;
+  user-select: none;
+}
+
+.sidebar__type-item:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.sidebar__checkbox {
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  border-radius: 5px;
+  cursor: pointer;
+  position: relative;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+
+.sidebar__checkbox:checked {
+  background: #60a5fa;
+  border-color: #60a5fa;
+}
+
+.sidebar__checkbox:checked::after {
+  content: '✓';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.sidebar__type-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  box-shadow: 0 0 6px currentColor;
+}
+
+.sidebar__type-icon {
+  font-size: 1rem;
+}
+
+.sidebar__type-label {
+  font-size: 0.875rem;
+  color: rgba(255, 255, 255, 0.85);
+  font-weight: 500;
+}
+
+/* Date range */
+.sidebar__dates {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.sidebar__date-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sidebar__date-label {
+  font-size: 0.7rem;
+  color: rgba(255, 255, 255, 0.4);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.sidebar__date-input {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: #e2e8f0;
+  font-size: 0.875rem;
+  font-family: inherit;
+  transition: border-color 0.2s, box-shadow 0.2s;
+  outline: none;
+}
+
+.sidebar__date-input:focus {
+  border-color: #60a5fa;
+  box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.15);
+}
+
+.sidebar__date-input::-webkit-calendar-picker-indicator {
+  filter: invert(1) brightness(0.6);
+}
+
+/* Reset button */
+.sidebar__reset {
+  margin: 20px 24px;
+  padding: 12px 20px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-family: inherit;
+}
+
+.sidebar__reset:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+/* Footer */
+.sidebar__footer {
+  margin-top: auto;
+  padding: 20px 24px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.sidebar__footer p {
+  font-size: 0.7rem;
+  color: rgba(255, 255, 255, 0.25);
+  line-height: 1.6;
+}
+
+/* Toggle button */
+.sidebar-toggle {
+  position: fixed;
+  top: 16px;
+  left: 16px;
+  z-index: 1002;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  background: rgba(15, 17, 23, 0.85);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: #fff;
+  font-size: 1.25rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.3s;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.sidebar-toggle--open {
+  left: 356px;
+}
+
+.sidebar-toggle:hover {
+  background: rgba(15, 17, 23, 0.95);
+  border-color: rgba(255, 255, 255, 0.15);
+  transform: scale(1.05);
+}
+
+.sidebar-toggle__icon {
+  line-height: 1;
+}
+
+/* Spinner */
+.spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(255, 255, 255, 0.1);
+  border-top-color: #60a5fa;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ── Crime Map ────────────────────────────── */
+.crime-map {
+  width: 100%;
+  height: 100%;
+}
+
+.crime-map__container {
+  width: 100%;
+  height: 100%;
+}
+
+/* ── Custom Crime Marker ──────────────────── */
+.crime-marker {
+  background: none !important;
+  border: none !important;
+}
+
+.crime-marker__pin {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  position: relative;
+  z-index: 2;
+  transition: transform 0.2s;
+}
+
+.crime-marker__pin:hover {
+  transform: scale(1.2);
+}
+
+.crime-marker__icon {
+  font-size: 14px;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.4));
+}
+
+.crime-marker__pulse {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  opacity: 0.3;
+  animation: pulse 2.5s ease-out infinite;
+  z-index: 1;
+}
+
+@keyframes pulse {
+  0% {
+    transform: translate(-50%, -50%) scale(1);
+    opacity: 0.3;
+  }
+  100% {
+    transform: translate(-50%, -50%) scale(2.5);
+    opacity: 0;
+  }
+}
+
+/* ── Cluster Icons ────────────────────────── */
+.custom-cluster {
+  background: none !important;
+  border: none !important;
+}
+
+.cluster-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  font-weight: 700;
+  font-size: 0.8rem;
+  color: #fff;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  backdrop-filter: blur(4px);
+}
+
+.cluster-icon--small {
+  width: 36px;
+  height: 36px;
+  background: linear-gradient(135deg, #3b82f6, #6366f1);
+  box-shadow: 0 0 16px rgba(59, 130, 246, 0.4);
+}
+
+.cluster-icon--medium {
+  width: 42px;
+  height: 42px;
+  background: linear-gradient(135deg, #f59e0b, #ef4444);
+  box-shadow: 0 0 20px rgba(245, 158, 11, 0.4);
+  font-size: 0.9rem;
+}
+
+.cluster-icon--large {
+  width: 50px;
+  height: 50px;
+  background: linear-gradient(135deg, #ef4444, #dc2626);
+  box-shadow: 0 0 24px rgba(239, 68, 68, 0.5);
+  font-size: 1rem;
+}
+
+/* ── Crime Popup ──────────────────────────── */
+.crime-popup-wrapper .leaflet-popup-content-wrapper {
+  background: #1a1d2b;
+  color: #e2e8f0;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  padding: 0;
+}
+
+.crime-popup-wrapper .leaflet-popup-content {
+  margin: 0;
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+.crime-popup-wrapper .leaflet-popup-tip {
+  background: #1a1d2b;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.crime-popup-wrapper .leaflet-popup-close-button {
+  color: rgba(255, 255, 255, 0.4) !important;
+  font-size: 18px !important;
+  top: 8px !important;
+  right: 10px !important;
+}
+
+.crime-popup-wrapper .leaflet-popup-close-button:hover {
+  color: #fff !important;
+}
+
+.crime-popup {
+  padding: 16px 20px;
+}
+
+.crime-popup__badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border-radius: 20px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  border: 1px solid;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.crime-popup__date {
+  margin-top: 10px;
+  font-size: 0.8rem;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.crime-popup__address {
+  margin-top: 8px;
+  font-size: 0.85rem;
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.crime-popup__neighbourhood {
+  margin-top: 4px;
+  font-size: 0.8rem;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.crime-popup__desc {
+  margin-top: 10px;
+  font-size: 0.8rem;
+  color: rgba(255, 255, 255, 0.6);
+  line-height: 1.5;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  padding-top: 10px;
+}
+
+.crime-popup__source {
+  display: inline-block;
+  margin-top: 10px;
+  font-size: 0.75rem;
+  color: #60a5fa;
+  text-decoration: none;
+  font-weight: 500;
+  transition: color 0.2s;
+}
+
+.crime-popup__source:hover {
+  color: #93bbfc;
+}
+
+/* ── Responsive ──────────────────────────── */
+@media (max-width: 768px) {
+  .sidebar {
+    width: 100%;
+    max-width: 340px;
+  }
+
+  .sidebar-toggle--open {
+    left: calc(min(100%, 340px) + 16px);
+  }
+
+  .app__main {
+    margin-left: 0;
+  }
+}

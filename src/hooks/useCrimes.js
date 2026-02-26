@@ -1,0 +1,67 @@
+/**
+ * useCrimes Hook
+ * 
+ * Fetches crime incidents from Supabase with optional filtering
+ * by crime type and date range. Returns { crimes, loading, error }.
+ * Gracefully handles missing Supabase configuration.
+ */
+import { useState, useEffect, useCallback } from 'react';
+import { supabase, isSupabaseConfigured } from '../lib/supabaseClient';
+
+export function useCrimes(filters = {}) {
+    const [crimes, setCrimes] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState(null);
+
+    const { selectedTypes, dateFrom, dateTo } = filters;
+
+    const fetchCrimes = useCallback(async () => {
+        // If Supabase isn't configured, return empty with a helpful message
+        if (!isSupabaseConfigured || !supabase) {
+            setLoading(false);
+            setError('Supabase not configured. Add your credentials to .env.local and restart.');
+            return;
+        }
+
+        setLoading(true);
+        setError(null);
+
+        try {
+            let query = supabase
+                .from('crimes')
+                .select('*')
+                .order('date_reported', { ascending: false });
+
+            // Filter by crime types (if not all selected)
+            if (selectedTypes && selectedTypes.length > 0) {
+                query = query.in('crime_type', selectedTypes);
+            }
+
+            // Filter by date range
+            if (dateFrom) {
+                query = query.gte('date_reported', dateFrom);
+            }
+            if (dateTo) {
+                const toDate = new Date(dateTo);
+                toDate.setDate(toDate.getDate() + 1);
+                query = query.lt('date_reported', toDate.toISOString());
+            }
+
+            const { data, error: queryError } = await query;
+
+            if (queryError) throw queryError;
+            setCrimes(data || []);
+        } catch (err) {
+            console.error('Error fetching crimes:', err);
+            setError(err.message);
+        } finally {
+            setLoading(false);
+        }
+    }, [selectedTypes, dateFrom, dateTo]);
+
+    useEffect(() => {
+        fetchCrimes();
+    }, [fetchCrimes]);
+
+    return { crimes, loading, error, refetch: fetchCrimes };
+}
