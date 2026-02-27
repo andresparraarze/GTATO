@@ -38,12 +38,16 @@ const RSS_FEEDS = [
 
 const NOMINATIM_URL = 'https://nominatim.openstreetmap.org/search';
 const NOMINATIM_UA = 'GTATO-CrimeMap/1.0';
-const DAYS_BACK = 7;
+const DAYS_BACK = 30;
 const NOW_ISO = new Date().toISOString();
+
+// Default fallback coordinates — Toronto City Centre
+const DEFAULT_LAT = 43.7417;
+const DEFAULT_LNG = -79.3733;
 
 // ── Crime Keyword Filter ──────────────────────────────────
 // Articles must match at least one of these to be considered crime-related
-const CRIME_FILTER_KEYWORDS = /\b(shooting|stabbing|assault|robbery|homicide|murder|arrested|charged|break\s*(and|&)\s*enter|theft|missing|firearm|weapon|police|tps|toronto\s*police)\b/i;
+const CRIME_FILTER_KEYWORDS = /\b(shooting|stabbing|assault|robbery|homicide|murder|arrested|charged|suspect|victim|investigation|incident|fatal|injured|attack|violent|weapon|firearm|fire|emergency|break\s*(and|&)\s*enter|theft|missing|police|tps|toronto\s*police)\b/i;
 
 // ── Crime Type Detection ──────────────────────────────────
 const CRIME_TYPE_RULES = [
@@ -200,35 +204,45 @@ async function main() {
     console.log('\n🚔 GTATO — Toronto Crime News Scraper');
     console.log(`📅 Scanning RSS feeds for crime articles from the last ${DAYS_BACK} days\n`);
 
-    // Step 1: Fetch all RSS feeds
+    // Step 1: Fetch all RSS feeds with per-source counts
     console.log('📡 Fetching RSS feeds...\n');
     let allArticles = [];
+    const sourceCounts = {};
 
     for (const feed of RSS_FEEDS) {
         const items = await fetchRSSFeed(feed);
+        sourceCounts[feed.name] = { fetched: items.length, matched: 0, geocoded: 0, fallback: 0 };
         allArticles.push(...items);
-        await sleep(500); // small delay between feeds
+        await sleep(500);
     }
 
     console.log(`\n📊 Total articles fetched: ${allArticles.length}`);
+    for (const [name, c] of Object.entries(sourceCounts)) {
+        console.log(`   ${name}: ${c.fetched} articles`);
+    }
 
-    // Step 2: Filter to last 7 days
+    // Step 2: Filter to last N days
     const cutoff = new Date();
     cutoff.setDate(cutoff.getDate() - DAYS_BACK);
 
     const recentArticles = allArticles.filter(a => {
-        if (!a.pubDate) return true; // include if no date (might be recent)
+        if (!a.pubDate) return true;
         const d = new Date(a.pubDate);
         return !isNaN(d.getTime()) && d >= cutoff;
     });
 
-    console.log(`📊 Articles from last ${DAYS_BACK} days: ${recentArticles.length}`);
+    console.log(`\n📊 Articles from last ${DAYS_BACK} days: ${recentArticles.length}`);
 
     // Step 3: Filter to crime-related articles
     const crimeArticles = recentArticles.filter(a => {
         const text = `${a.title} ${a.description}`;
         return CRIME_FILTER_KEYWORDS.test(text);
     });
+
+    // Count matches per source
+    for (const a of crimeArticles) {
+        if (sourceCounts[a.source]) sourceCounts[a.source].matched++;
+    }
 
     console.log(`📊 Crime-related articles: ${crimeArticles.length}`);
 
@@ -237,75 +251,88 @@ async function main() {
         process.exit(0);
     }
 
-    // Step 4: Extract crime type + addresses
-    console.log(`\n📰 Processing ${crimeArticles.length} crime articles...\n`);
+    // Step 4: Log every matched article and extract crime type + addresses
+    console.log(`\n📰 Matched crime articles:\n`);
+    for (const a of crimeArticles) {
+        const dateStr = a.pubDate ? new Date(a.pubDate).toISOString().split('T')[0] : 'no date';
+        console.log(`   [${a.source}] [${dateStr}] ${a.title}`);
+    }
+
+    console.log(`\n📰 Extracting crime details...\n`);
     const incidents = [];
 
     for (const article of crimeArticles) {
         const fullText = `${article.title} ${article.description}`;
         const crimeType = detectCrimeType(fullText);
         const addresses = extractAddresses(fullText);
+        const address = addresses.length > 0 ? addresses[0] : null;
 
-        if (addresses.length === 0) {
-            console.log(`   ⏭️  No address: ${article.title.substring(0, 70)}`);
-            continue;
-        }
-
-        console.log(`   ✓ [${crimeType}] ${addresses[0]} — ${article.title.substring(0, 50)}`);
+        console.log(`   ${crimeType.padEnd(18)} | ${(address || '(no address)').padEnd(40)} | ${article.title.substring(0, 55)}`);
 
         incidents.push({
             title: article.title,
             url: typeof article.link === 'string' ? article.link : '',
             date: article.pubDate ? new Date(article.pubDate) : null,
             crimeType,
-            address: addresses[0],
+            address,
             source: article.source,
         });
     }
 
-    console.log(`\n📊 ${incidents.length} incidents with extractable addresses`);
+    console.log(`\n📊 ${incidents.length} total incidents (${incidents.filter(i => i.address).length} with addresses, ${incidents.filter(i => !i.address).length} without)`);
 
     if (incidents.length === 0) {
-        console.log('\nℹ️  No geocodable incidents found. Nothing to insert.');
+        console.log('\nℹ️  No incidents to process.');
         process.exit(0);
     }
 
-    // Step 5: Geocode each incident
-    console.log('\n🌍 Geocoding addresses via Nominatim...\n');
+    // Step 5: Geocode each incident — fallback to city center if geocoding fails
+    console.log('\n🌍 Geocoding addresses via Nominatim (fallback: Toronto city center)...\n');
     const rows = [];
-    let geocodeFails = 0;
+    let geocodeSuccess = 0;
+    let geocodeFallback = 0;
 
     for (const incident of incidents) {
-        const coords = await geocodeAddress(incident.address);
+        let lat = DEFAULT_LAT;
+        let lng = DEFAULT_LNG;
+        let usedFallback = true;
 
-        if (coords) {
-            rows.push({
-                crime_type: incident.crimeType,
-                lat: coords.lat,
-                lng: coords.lng,
-                date_reported: incident.date && !isNaN(incident.date.getTime())
-                    ? incident.date.toISOString()
-                    : NOW_ISO,
-                neighbourhood: null,
-                address: incident.address,
-                description: incident.title,
-                source_url: incident.url,
-                last_updated: NOW_ISO,
-            });
+        if (incident.address) {
+            const coords = await geocodeAddress(incident.address);
+            if (coords) {
+                lat = coords.lat;
+                lng = coords.lng;
+                usedFallback = false;
+                geocodeSuccess++;
+                if (sourceCounts[incident.source]) sourceCounts[incident.source].geocoded++;
+            } else {
+                geocodeFallback++;
+                if (sourceCounts[incident.source]) sourceCounts[incident.source].fallback++;
+                console.log(`      ↪ Using fallback coords for: ${incident.title.substring(0, 50)}`);
+            }
+            // Rate limit: 1 request per second for Nominatim
+            await sleep(1000);
         } else {
-            geocodeFails++;
+            geocodeFallback++;
+            if (sourceCounts[incident.source]) sourceCounts[incident.source].fallback++;
         }
 
-        // Rate limit: 1 request per second for Nominatim
-        await sleep(1000);
+        rows.push({
+            crime_type: incident.crimeType,
+            lat,
+            lng,
+            date_reported: incident.date && !isNaN(incident.date.getTime())
+                ? incident.date.toISOString()
+                : NOW_ISO,
+            neighbourhood: null,
+            address: incident.address || 'Toronto (approximate)',
+            description: incident.title,
+            source_url: incident.url,
+            last_updated: NOW_ISO,
+        });
     }
 
-    console.log(`\n📊 Geocoded: ${rows.length} success, ${geocodeFails} failed`);
-
-    if (rows.length === 0) {
-        console.log('\nℹ️  No incidents could be geocoded. Nothing to insert.');
-        process.exit(0);
-    }
+    console.log(`\n📊 Geocoding: ${geocodeSuccess} precise, ${geocodeFallback} fallback (city center)`);
 
     // Step 6: Insert into Supabase
     console.log('\n📥 Inserting into Supabase...');
@@ -326,18 +353,25 @@ async function main() {
     console.log(`   ✓ Inserted ${data.length} incidents from news feeds`);
 
     // Summary
+    console.log('\n' + '─'.repeat(60));
+    console.log('📋 SUMMARY');
+    console.log('─'.repeat(60));
+
     const counts = {};
     rows.forEach(r => { counts[r.crime_type] = (counts[r.crime_type] || 0) + 1; });
-    const sources = {};
-    incidents.filter((_, i) => i < rows.length).forEach(inc => {
-        sources[inc.source] = (sources[inc.source] || 0) + 1;
-    });
 
-    console.log('\n📋 Crime type breakdown:');
-    Object.entries(counts).sort((a, b) => b[1] - a[1]).forEach(([t, c]) => console.log(`   ${t}: ${c}`));
+    console.log('\n   Crime type breakdown:');
+    Object.entries(counts).sort((a, b) => b[1] - a[1]).forEach(([t, c]) => console.log(`      ${t}: ${c}`));
 
-    console.log('\n📰 Source breakdown:');
-    Object.entries(sources).sort((a, b) => b[1] - a[1]).forEach(([s, c]) => console.log(`   ${s}: ${c}`));
+    console.log('\n   Per-source breakdown:');
+    console.log('   ' + 'Source'.padEnd(20) + 'Fetched  Matched  Geocoded  Fallback');
+    for (const [name, c] of Object.entries(sourceCounts)) {
+        console.log(`   ${name.padEnd(20)}${String(c.fetched).padEnd(9)}${String(c.matched).padEnd(9)}${String(c.geocoded).padEnd(10)}${c.fallback}`);
+    }
+
+    console.log(`\n   Total inserted: ${data.length}`);
+    console.log(`   Precise coords: ${geocodeSuccess}`);
+    console.log(`   Fallback coords: ${geocodeFallback}`);
 
     console.log(`\n✅ Done — ${data.length} news incidents added to Supabase\n`);
 }
