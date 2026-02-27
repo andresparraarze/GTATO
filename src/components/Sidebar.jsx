@@ -213,7 +213,7 @@ export default function Sidebar({
 
                 {/* Footer */}
                 <div className="sidebar__footer">
-                    <p>Data: Toronto Police Service Open Data</p>
+                    <p>Data: City of Toronto Open Data</p>
                     <p>Built with React + Leaflet + Supabase</p>
                 </div>
             </aside>

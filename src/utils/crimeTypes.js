@@ -1,6 +1,10 @@
 /**
  * Crime type definitions with colors and labels.
  * Used by map markers, sidebar legend, and filtering.
+ *
+ * Keys match the exact MCI_CATEGORY values from the
+ * City of Toronto CKAN API (plus "Shooting" from the
+ * Shootings & Firearm Discharges dataset).
  */
 
 export const CRIME_TYPES = {
@@ -10,11 +14,41 @@ export const CRIME_TYPES = {
         label: 'Assault',
         icon: '👊',
     },
-    'Theft': {
+    'Auto Theft': {
+        color: '#3b82f6',    // Blue
+        bg: 'rgba(59, 130, 246, 0.15)',
+        label: 'Auto Theft',
+        icon: '🚗',
+    },
+    'Bicycle Theft': {
+        color: '#06b6d4',    // Cyan
+        bg: 'rgba(6, 182, 212, 0.15)',
+        label: 'Bicycle Theft',
+        icon: '🚲',
+    },
+    'Break and Enter': {
+        color: '#8b5cf6',    // Purple
+        bg: 'rgba(139, 92, 246, 0.15)',
+        label: 'Break and Enter',
+        icon: '🔓',
+    },
+    'Homicide': {
+        color: '#18181b',    // Black
+        bg: 'rgba(24, 24, 27, 0.25)',
+        label: 'Homicide',
+        icon: '💀',
+    },
+    'Robbery': {
         color: '#f59e0b',    // Amber
         bg: 'rgba(245, 158, 11, 0.15)',
-        label: 'Theft',
-        icon: '🧤',
+        label: 'Robbery',
+        icon: '💰',
+    },
+    'Sexual Violation': {
+        color: '#ec4899',    // Pink
+        bg: 'rgba(236, 72, 153, 0.15)',
+        label: 'Sexual Violation',
+        icon: '⚠️',
     },
     'Shooting': {
         color: '#dc2626',    // Dark Red
@@ -22,17 +56,17 @@ export const CRIME_TYPES = {
         label: 'Shooting',
         icon: '💥',
     },
-    'Break & Enter': {
-        color: '#8b5cf6',    // Purple
-        bg: 'rgba(139, 92, 246, 0.15)',
-        label: 'Break & Enter',
-        icon: '🔓',
+    'Theft from MV': {
+        color: '#14b8a6',    // Teal
+        bg: 'rgba(20, 184, 166, 0.15)',
+        label: 'Theft from MV',
+        icon: '📦',
     },
-    'Auto Theft': {
-        color: '#3b82f6',    // Blue
-        bg: 'rgba(59, 130, 246, 0.15)',
-        label: 'Auto Theft',
-        icon: '🚗',
+    'Theft Over': {
+        color: '#f97316',    // Orange
+        bg: 'rgba(249, 115, 22, 0.15)',
+        label: 'Theft Over',
+        icon: '🧤',
     },
 };
 
@@ -45,34 +79,4 @@ export const CRIME_TYPE_KEYS = Object.keys(CRIME_TYPES);
  */
 export function getCrimeColor(crimeType) {
     return CRIME_TYPES[crimeType]?.color ?? '#6b7280';
-}
-
-/**
- * Maps ArcGIS MCI_CATEGORY values to our normalized crime type keys.
- * Used by the data ingestion script.
- */
-const MCI_CATEGORY_MAP = {
-    'Assault': 'Assault',
-    'Robbery': 'Theft',
-    'Break and Enter': 'Break & Enter',
-    'Auto Theft': 'Auto Theft',
-    'Theft Over': 'Theft',
-    'Homicide': 'Assault',
-    'Shooting': 'Shooting',
-};
-
-/**
- * Normalize an ArcGIS MCI_CATEGORY string to one of our 5 crime types.
- */
-export function normalizeCrimeType(mciCategory) {
-    if (!mciCategory) return 'Theft';
-    if (MCI_CATEGORY_MAP[mciCategory]) return MCI_CATEGORY_MAP[mciCategory];
-    const lower = mciCategory.toLowerCase();
-    if (lower.includes('assault')) return 'Assault';
-    if (lower.includes('robbery') || lower.includes('theft')) return 'Theft';
-    if (lower.includes('break') || lower.includes('enter')) return 'Break & Enter';
-    if (lower.includes('auto')) return 'Auto Theft';
-    if (lower.includes('shoot') || lower.includes('firearm')) return 'Shooting';
-    if (lower.includes('homicide')) return 'Assault';
-    return 'Theft';
 }

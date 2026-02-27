@@ -1,14 +1,12 @@
 /**
- * GTATO — Toronto Police Data Ingestion
+ * GTATO — Toronto Crime Data Ingestion (CKAN API)
  *
- * Downloads full GeoJSON datasets from Toronto Police Open Data portal,
- * filters to last 90 days in JavaScript, and inserts into Supabase.
- *
- * Uses only raw fetch() — no ArcGIS SDK, no wrappers.
+ * Downloads crime datasets from the City of Toronto Open Data CKAN portal,
+ * filters to last 90 days, and inserts into Supabase.
  *
  * Datasets:
- *   1. Major Crime Indicators Open Data (GeoJSON) — REQUIRED
- *   2. Shootings & Firearm Discharges Open Data (GeoJSON) — OPTIONAL
+ *   1. Major Crime Indicators — REQUIRED
+ *   2. Shootings & Firearm Discharges — OPTIONAL (continues if this fails)
  *
  * Env vars required:
  *   SUPABASE_URL              — Supabase project URL
@@ -33,12 +31,14 @@ if (!SUPABASE_URL || !SERVICE_KEY) {
 
 const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
 
-// ── GeoJSON Download URLs ─────────────────────────────────
-const MCI_GEOJSON_URL =
-    'https://data.torontopolice.on.ca/datasets/TorontoPS::major-crime-indicators-open-data.geojson';
+// ── CKAN API Endpoints ───────────────────────────────────
+const CKAN_BASE = 'https://ckan0.cf.opendata.inter.prod-toronto.ca/api/3/action/datastore_search';
 
-const SHOOTINGS_GEOJSON_URL =
-    'https://data.torontopolice.on.ca/datasets/TorontoPS::shooting-and-firearm-discharges-open-data.geojson';
+const MCI_RESOURCE_ID = '0f6fe7db-81a8-4ecc-9c20-3e4e3d0c73bb';
+const SHOOTINGS_RESOURCE_ID = '0b6d13fd-b07c-4440-93ea-f3e08a9498ab';
+
+const MCI_PAGE_SIZE = 2000;
+const SHOOTINGS_PAGE_SIZE = 1000;
 
 // ── Date Filter Config ────────────────────────────────────
 const DAYS_BACK = 90;
@@ -49,158 +49,136 @@ const cutoffMs = cutoffDate.getTime();
 // Timestamp for this ingestion run
 const NOW_ISO = new Date().toISOString();
 
-// ── Crime Type Mapping ────────────────────────────────────
-function normalizeCrimeType(category) {
-    if (!category) return 'Theft';
-    const cat = category.toLowerCase();
-    if (cat.includes('assault')) return 'Assault';
-    if (cat.includes('robbery') || cat.includes('theft over')) return 'Theft';
-    if (cat.includes('break') && cat.includes('enter')) return 'Break & Enter';
-    if (cat.includes('auto theft')) return 'Auto Theft';
-    if (cat.includes('shoot') || cat.includes('firearm')) return 'Shooting';
-    if (cat.includes('homicide')) return 'Assault';
-    return 'Theft';
-}
-
 // ── Helpers ───────────────────────────────────────────────
 
 /**
- * Fetch a GeoJSON dataset. If `required` is true, the script exits on failure.
- * If false, it logs a warning and returns an empty array so the rest continues.
+ * Fetch all records from a CKAN datastore_search endpoint, auto-paginating.
+ * If `required` is true the script exits on failure; otherwise it logs a
+ * warning and returns an empty array so the other dataset can still run.
  */
-async function fetchGeoJSON(url, label, required = true) {
+async function fetchCKAN(resourceId, label, pageSize, required = true) {
     console.log(`📡 Downloading ${label}...`);
-    console.log(`   URL: ${url}`);
+
+    const allRecords = [];
+    let offset = 0;
 
     try {
-        const res = await fetch(url);
-        if (!res.ok) {
-            const msg = `${label} download failed: HTTP ${res.status} ${res.statusText}`;
-            if (required) {
-                console.error(`❌ ${msg}`);
-                process.exit(1);
+        while (true) {
+            const url = `${CKAN_BASE}?resource_id=${resourceId}&limit=${pageSize}&offset=${offset}&sort=OCC_DATE desc`;
+            console.log(`   Fetching offset=${offset} limit=${pageSize}...`);
+
+            const res = await fetch(url);
+            if (!res.ok) {
+                const msg = `${label} download failed: HTTP ${res.status} ${res.statusText}`;
+                if (required) { console.error(`❌ ${msg}`); process.exit(1); }
+                console.warn(`⚠️  ${msg} — skipping this dataset`);
+                return allRecords; // return whatever we have so far
             }
-            console.warn(`⚠️  ${msg} — skipping this dataset`);
-            return [];
+
+            const json = await res.json();
+
+            if (!json.success || !json.result || !Array.isArray(json.result.records)) {
+                const msg = `${label}: unexpected CKAN response (no result.records array)`;
+                if (required) { console.error(`❌ ${msg}`); process.exit(1); }
+                console.warn(`⚠️  ${msg} — skipping this dataset`);
+                return allRecords;
+            }
+
+            const records = json.result.records;
+            allRecords.push(...records);
+
+            // If we got fewer records than the page size, we've reached the end
+            if (records.length < pageSize) break;
+
+            // Check if we've fetched all available records
+            const total = json.result.total;
+            if (total != null && allRecords.length >= total) break;
+
+            offset += pageSize;
         }
 
-        const geojson = await res.json();
-
-        if (!geojson.features || !Array.isArray(geojson.features)) {
-            const msg = `${label}: response is not valid GeoJSON (no features array)`;
-            if (required) {
-                console.error(`❌ ${msg}`);
-                process.exit(1);
-            }
-            console.warn(`⚠️  ${msg} — skipping this dataset`);
-            return [];
-        }
-
-        console.log(`   ✓ Downloaded ${geojson.features.length} total features`);
-        return geojson.features;
+        console.log(`   ✓ Downloaded ${allRecords.length} total records`);
+        return allRecords;
     } catch (err) {
         const msg = `${label} fetch error: ${err.message}`;
-        if (required) {
-            console.error(`❌ ${msg}`);
-            process.exit(1);
-        }
+        if (required) { console.error(`❌ ${msg}`); process.exit(1); }
         console.warn(`⚠️  ${msg} — skipping this dataset`);
-        return [];
+        return allRecords;
     }
 }
 
 /**
- * Extract a date (epoch ms) from a GeoJSON feature's properties.
- * Tries common field names used by Toronto Police datasets.
+ * Parse a date string from CKAN and return epoch ms, or null.
  */
-function extractDate(props) {
-    const raw = props.OCC_DATE || props.occ_date || props.REPORT_DATE || props.report_date;
+function parseDate(raw) {
     if (!raw) return null;
     if (typeof raw === 'number') return raw;
     const parsed = new Date(raw).getTime();
     return isNaN(parsed) ? null : parsed;
 }
 
-/**
- * Extract lat/lng from a GeoJSON feature.
- * Prefers explicit LAT_WGS84/LONG_WGS84 fields, falls back to geometry.coordinates.
- * GeoJSON coordinates are [longitude, latitude].
- */
-function extractCoords(feature) {
-    const props = feature.properties || {};
-    if (props.LAT_WGS84 != null && props.LONG_WGS84 != null
-        && props.LAT_WGS84 !== 0 && props.LONG_WGS84 !== 0) {
-        return { lat: props.LAT_WGS84, lng: props.LONG_WGS84 };
-    }
-    if (feature.geometry && feature.geometry.coordinates) {
-        const [lng, lat] = feature.geometry.coordinates;
-        if (lat !== 0 && lng !== 0) return { lat, lng };
-    }
-    return null;
-}
-
 // ── Main ──────────────────────────────────────────────────
 async function main() {
-    console.log('\n🚔 GTATO — Toronto Police Data Ingestion');
+    console.log('\n🚔 GTATO — Toronto Crime Data Ingestion (CKAN API)');
     console.log(`📅 Filtering to last ${DAYS_BACK} days (since ${cutoffDate.toISOString().split('T')[0]})\n`);
 
     // 1. Download both datasets
-    // MCI is required — script exits if it fails.
-    // Shootings is optional — script continues with just MCI data if shootings fails.
-    const mciFeatures = await fetchGeoJSON(MCI_GEOJSON_URL, 'Major Crime Indicators', true);
-    const shootFeatures = await fetchGeoJSON(SHOOTINGS_GEOJSON_URL, 'Shootings & Firearm Discharges', false);
+    //    MCI is required — script exits if it fails.
+    //    Shootings is optional — script continues with just MCI data if shootings fails.
+    const mciRecords = await fetchCKAN(MCI_RESOURCE_ID, 'Major Crime Indicators', MCI_PAGE_SIZE, true);
+    const shootRecords = await fetchCKAN(SHOOTINGS_RESOURCE_ID, 'Shootings & Firearm Discharges', SHOOTINGS_PAGE_SIZE, false);
 
-    // 2. Transform + filter MCI features (last 90 days)
+    // 2. Transform + filter MCI records (last 90 days)
     const mciRows = [];
     let mciSkippedDate = 0;
     let mciSkippedCoords = 0;
 
-    for (const f of mciFeatures) {
-        const props = f.properties || {};
-        const dateMs = extractDate(props);
+    for (const rec of mciRecords) {
+        const dateMs = parseDate(rec.OCC_DATE);
         if (dateMs == null || dateMs < cutoffMs) { mciSkippedDate++; continue; }
 
-        const coords = extractCoords(f);
-        if (!coords) { mciSkippedCoords++; continue; }
+        const lat = parseFloat(rec.LAT);
+        const lng = parseFloat(rec.LONG);
+        if (!lat || !lng || !isFinite(lat) || !isFinite(lng)) { mciSkippedCoords++; continue; }
 
         mciRows.push({
-            crime_type: normalizeCrimeType(props.CSI_CATEGORY || props.MCI_CATEGORY),
-            lat: coords.lat,
-            lng: coords.lng,
+            crime_type: rec.MCI_CATEGORY || 'Unknown',
+            lat,
+            lng,
             date_reported: new Date(dateMs).toISOString(),
-            neighbourhood: props.NEIGHBOURHOOD_158 || props.NEIGHBOURHOOD_140 || null,
-            address: props.LOCATION_TYPE || props.PREMISES_TYPE || null,
-            description: props.OFFENCE || props.CSI_CATEGORY || props.MCI_CATEGORY || null,
-            source_url: 'https://data.torontopolice.on.ca',
+            neighbourhood: rec.NEIGHBOURHOOD_158 || null,
+            address: rec.LOCATION_TYPE || null,
+            description: rec.OFFENCE || null,
+            source_url: 'https://open.toronto.ca',
             last_updated: NOW_ISO,
         });
     }
     console.log(`\n📊 MCI: ${mciRows.length} kept, ${mciSkippedDate} outside date range, ${mciSkippedCoords} missing coords`);
 
-    // 3. Transform + filter Shooting features (last 90 days)
+    // 3. Transform + filter Shooting records (last 90 days)
     const shootRows = [];
     let shootSkippedDate = 0;
     let shootSkippedCoords = 0;
 
-    for (const f of shootFeatures) {
-        const props = f.properties || {};
-        const dateMs = extractDate(props);
+    for (const rec of shootRecords) {
+        const dateMs = parseDate(rec.OCC_DATE);
         if (dateMs == null || dateMs < cutoffMs) { shootSkippedDate++; continue; }
 
-        const coords = extractCoords(f);
-        if (!coords) { shootSkippedCoords++; continue; }
+        const lat = parseFloat(rec.LAT);
+        const lng = parseFloat(rec.LONG);
+        if (!lat || !lng || !isFinite(lat) || !isFinite(lng)) { shootSkippedCoords++; continue; }
 
         shootRows.push({
             crime_type: 'Shooting',
-            lat: coords.lat,
-            lng: coords.lng,
+            lat,
+            lng,
             date_reported: new Date(dateMs).toISOString(),
-            neighbourhood: props.NEIGHBOURHOOD_158 || props.NEIGHBOURHOOD_140 || null,
-            address: props.LOCATION_TYPE || props.PREMISES_TYPE || null,
-            description: props.INJURIES != null
-                ? `Firearm discharge — ${props.INJURIES} injury(ies)`
+            neighbourhood: rec.NEIGHBOURHOOD_158 || null,
+            address: rec.LOCATION_TYPE || null,
+            description: rec.INJURIES != null
+                ? `Firearm discharge — ${rec.INJURIES} injury(ies)`
                 : 'Firearm discharge',
-            source_url: 'https://data.torontopolice.on.ca',
+            source_url: 'https://open.toronto.ca',
             last_updated: NOW_ISO,
         });
     }
@@ -248,7 +226,7 @@ async function main() {
     console.log(`\n✅ Done — inserted ${total} crime records\n`);
     console.log('📋 Breakdown:');
     Object.entries(counts).sort((a, b) => b[1] - a[1]).forEach(([t, c]) => console.log(`   ${t}: ${c}`));
-    if (shootFeatures.length === 0 && shootRows.length === 0) {
+    if (shootRecords.length === 0 && shootRows.length === 0) {
         console.log('\n⚠️  Note: Shootings dataset was unavailable — only MCI data was ingested.');
     }
     console.log('');
