@@ -1,7 +1,8 @@
 /**
  * CrimeMap Component
  *
- * Interactive Leaflet map centered on the Greater Toronto Area.
+ * Interactive Leaflet map with multi-city support.
+ * Re-centers and re-zooms when the selected city changes.
  * Renders crime markers with:
  * - Color-coded custom div icons by crime type
  * - MarkerClusterGroup for pin clustering
@@ -15,7 +16,7 @@ import { MapContainer, TileLayer, Marker, Popup, Circle, useMap } from 'react-le
 import MarkerClusterGroup from 'react-leaflet-cluster';
 import L from 'leaflet';
 import CrimePopup from './CrimePopup';
-import { getCrimeColor, CRIME_TYPES } from '../utils/crimeTypes';
+import { getCrimeColor, getCrimeTypesForCity, CITY_CONFIG } from '../utils/crimeTypes';
 
 // Fix Leaflet's default icon paths for bundlers
 delete L.Icon.Default.prototype._getIconUrl;
@@ -25,16 +26,17 @@ L.Icon.Default.mergeOptions({
     shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
 });
 
-/** Toronto center coordinates */
-const TORONTO_CENTER = [43.7417, -79.3733];
+/** Default center and zoom (Toronto) */
+const DEFAULT_CENTER = [43.7417, -79.3733];
 const DEFAULT_ZOOM = 11;
 
 /**
  * Creates a custom colored circle marker icon for a crime type.
  */
-function createCrimeIcon(crimeType) {
+function createCrimeIcon(crimeType, city) {
     const color = getCrimeColor(crimeType);
-    const icon = CRIME_TYPES[crimeType]?.icon || '📍';
+    const types = getCrimeTypesForCity(city);
+    const icon = types[crimeType]?.icon || '📍';
 
     return L.divIcon({
         className: 'crime-marker',
@@ -84,16 +86,23 @@ function createClusterIcon(cluster) {
 }
 
 /**
- * Inner component to center map on user location when it becomes available.
- * Also provides the "center on me" button control.
+ * Inner component to handle map centering and city changes.
  */
-function MapController({ userLocation, mapRef }) {
+function MapController({ userLocation, city, mapRef }) {
     const map = useMap();
 
     // Store map reference for external use
     useEffect(() => {
         if (mapRef) mapRef.current = map;
     }, [map, mapRef]);
+
+    // Re-center map when city changes
+    useEffect(() => {
+        const cfg = CITY_CONFIG[city];
+        if (cfg) {
+            map.setView(cfg.center, cfg.zoom, { animate: true });
+        }
+    }, [city, map]);
 
     // Center on user location once when it first becomes available
     useEffect(() => {
@@ -105,7 +114,7 @@ function MapController({ userLocation, mapRef }) {
     return null;
 }
 
-export default function CrimeMap({ crimes, userLocation, radiusKm }) {
+export default function CrimeMap({ crimes, city, userLocation, radiusKm }) {
     const mapRef = useRef(null);
 
     const handleCenterOnUser = () => {
@@ -117,12 +126,12 @@ export default function CrimeMap({ crimes, userLocation, radiusKm }) {
     return (
         <div className="crime-map">
             <MapContainer
-                center={TORONTO_CENTER}
+                center={DEFAULT_CENTER}
                 zoom={DEFAULT_ZOOM}
                 className="crime-map__container"
                 zoomControl={false}
             >
-                <MapController userLocation={userLocation} mapRef={mapRef} />
+                <MapController userLocation={userLocation} city={city} mapRef={mapRef} />
 
                 {/* Dark-themed CartoDB tiles */}
                 <TileLayer
@@ -174,7 +183,7 @@ export default function CrimeMap({ crimes, userLocation, radiusKm }) {
                             <Marker
                                 key={crime.id}
                                 position={[crime.lat, crime.lng]}
-                                icon={createCrimeIcon(crime.crime_type)}
+                                icon={createCrimeIcon(crime.crime_type, city)}
                             >
                                 <Popup className="crime-popup-wrapper" maxWidth={320} minWidth={260}>
                                     <CrimePopup crime={crime} />

@@ -177,6 +177,7 @@ async function main() {
 
         rows.push({
             crime_type: rec.CSI_CATEGORY || 'Unknown',
+            city: 'toronto',
             lat,
             lng,
             date_reported: dateISO,
@@ -195,18 +196,18 @@ async function main() {
         process.exit(1);
     }
 
-    // 4. Clear old data
-    console.log('\n🗑️  Clearing old crime data...');
+    // 4. Clear old Toronto data (scope to city='toronto' to protect other cities)
+    console.log('\n🗑️  Clearing old Toronto crime data...');
     const { error: delErr } = await supabase
         .from('crimes')
         .delete()
-        .neq('id', '00000000-0000-0000-0000-000000000000');
+        .eq('city', 'toronto');
     if (delErr) {
         console.error('❌ Supabase DELETE failed:', delErr.message);
         console.error('   Details:', JSON.stringify(delErr));
         process.exit(1);
     }
-    console.log('   ✓ Old data cleared');
+    console.log('   ✓ Old Toronto data cleared');
 
     // 5. Insert in batches of 500
     console.log('\n📥 Inserting new data...');

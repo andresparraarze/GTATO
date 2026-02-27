@@ -109,6 +109,59 @@
   text-transform: uppercase;
 }
 
+/* City Switcher */
+.city-switcher {
+  display: flex;
+  gap: 6px;
+  padding: 12px 24px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.city-switcher__btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px 8px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 0.8rem;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.25s ease;
+}
+
+.city-switcher__btn:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.8);
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+.city-switcher__btn--active {
+  background: rgba(96, 165, 250, 0.15);
+  border-color: rgba(96, 165, 250, 0.4);
+  color: #60a5fa;
+  font-weight: 600;
+  box-shadow: 0 0 12px rgba(96, 165, 250, 0.1);
+}
+
+.city-switcher__btn--active:hover {
+  background: rgba(96, 165, 250, 0.2);
+  color: #93bbfc;
+}
+
+.city-switcher__flag {
+  font-size: 1.1rem;
+}
+
+.city-switcher__name {
+  white-space: nowrap;
+}
+
 /* Count */
 .sidebar__count {
   padding: 16px 24px;

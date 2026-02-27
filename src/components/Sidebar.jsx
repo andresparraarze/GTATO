@@ -2,16 +2,19 @@
  * Sidebar Component
  *
  * Filter panel with:
+ * - City switcher (Toronto / Santa Cruz)
  * - Crime type checkboxes (colored indicators)
  * - Date range picker (from/to)
  * - Proximity section (radius selector + nearby count)
  * - Reset filters button
  * - Crime count summary
  */
-import { CRIME_TYPES, CRIME_TYPE_KEYS } from '../utils/crimeTypes';
+import { CITY_CONFIG, CITY_KEYS, getCrimeTypesForCity, getCrimeTypeKeysForCity } from '../utils/crimeTypes';
 import { RADIUS_OPTIONS } from '../utils/geo';
 
 export default function Sidebar({
+    city,
+    onCityChange,
     selectedTypes,
     onTypesChange,
     dateFrom,
@@ -31,6 +34,10 @@ export default function Sidebar({
     nearbyCrimeCount,
     lastUpdated,
 }) {
+    const cityConfig = CITY_CONFIG[city] || CITY_CONFIG.toronto;
+    const crimeTypes = getCrimeTypesForCity(city);
+    const crimeTypeKeys = getCrimeTypeKeysForCity(city);
+
     /** Format a relative time string like "2 hours ago" */
     const formatTimeAgo = (isoString) => {
         if (!isoString) return null;
@@ -43,6 +50,7 @@ export default function Sidebar({
         const days = Math.floor(hrs / 24);
         return `${days}d ago`;
     };
+
     /** Toggle a single crime type in the selected set */
     const handleTypeToggle = (type) => {
         if (selectedTypes.includes(type)) {
@@ -54,10 +62,10 @@ export default function Sidebar({
 
     /** Select / deselect all types */
     const handleSelectAll = () => {
-        if (selectedTypes.length === CRIME_TYPE_KEYS.length) {
+        if (selectedTypes.length === crimeTypeKeys.length) {
             onTypesChange([]);
         } else {
-            onTypesChange([...CRIME_TYPE_KEYS]);
+            onTypesChange([...crimeTypeKeys]);
         }
     };
 
@@ -79,7 +87,24 @@ export default function Sidebar({
                         <span className="sidebar__logo-icon">🗺️</span>
                         <h1 className="sidebar__title">GTATO</h1>
                     </div>
-                    <p className="sidebar__subtitle">GTA Toronto Crime Map</p>
+                    <p className="sidebar__subtitle">{cityConfig.subtitle}</p>
+                </div>
+
+                {/* City Switcher */}
+                <div className="city-switcher">
+                    {CITY_KEYS.map((key) => {
+                        const cfg = CITY_CONFIG[key];
+                        return (
+                            <button
+                                key={key}
+                                className={`city-switcher__btn ${city === key ? 'city-switcher__btn--active' : ''}`}
+                                onClick={() => onCityChange(key)}
+                            >
+                                <span className="city-switcher__flag">{cfg.flag}</span>
+                                <span className="city-switcher__name">{cfg.name}</span>
+                            </button>
+                        );
+                    })}
                 </div>
 
                 {/* Crime count */}
@@ -151,15 +176,15 @@ export default function Sidebar({
                     <div className="sidebar__section-header">
                         <h2 className="sidebar__section-title">Crime Type</h2>
                         <button className="sidebar__select-all" onClick={handleSelectAll}>
-                            {selectedTypes.length === CRIME_TYPE_KEYS.length
+                            {selectedTypes.length === crimeTypeKeys.length
                                 ? 'Deselect all'
                                 : 'Select all'}
                         </button>
                     </div>
 
                     <div className="sidebar__types">
-                        {CRIME_TYPE_KEYS.map((type) => {
-                            const info = CRIME_TYPES[type];
+                        {crimeTypeKeys.map((type) => {
+                            const info = crimeTypes[type];
                             const isChecked = selectedTypes.includes(type);
                             return (
                                 <label key={type} className="sidebar__type-item">
@@ -213,7 +238,7 @@ export default function Sidebar({
 
                 {/* Footer */}
                 <div className="sidebar__footer">
-                    <p>Data: City of Toronto Open Data</p>
+                    <p>Data: {cityConfig.dataSource}</p>
                     <p>Built with React + Leaflet + Supabase</p>
                 </div>
             </aside>

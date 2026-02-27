@@ -14,7 +14,7 @@ export function useCrimes(filters = {}) {
     const [error, setError] = useState(null);
     const [lastUpdated, setLastUpdated] = useState(null);
 
-    const { selectedTypes, dateFrom, dateTo } = filters;
+    const { selectedTypes, dateFrom, dateTo, city } = filters;
 
     const fetchCrimes = useCallback(async () => {
         // If Supabase isn't configured, return empty with a helpful message
@@ -31,7 +31,8 @@ export function useCrimes(filters = {}) {
             let query = supabase
                 .from('crimes')
                 .select('*')
-                .order('date_reported', { ascending: false });
+                .order('date_reported', { ascending: false })
+                .eq('city', city || 'toronto');
 
             // Filter by crime types (if not all selected)
             if (selectedTypes && selectedTypes.length > 0) {
@@ -74,7 +75,7 @@ export function useCrimes(filters = {}) {
         } finally {
             setLoading(false);
         }
-    }, [selectedTypes, dateFrom, dateTo]);
+    }, [selectedTypes, dateFrom, dateTo, city]);
 
     useEffect(() => {
         fetchCrimes();
