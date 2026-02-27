@@ -5,6 +5,10 @@
  * extracts crime details and addresses, geocodes via Nominatim,
  * and inserts into the Supabase crimes table.
  *
+ * Strategy:
+ *   1. Try scraping the HTML newsroom page with realistic browser headers
+ *   2. If that returns 403, fall back to the TPS RSS feed (parsed via fast-xml-parser)
+ *
  * Env vars required:
  *   SUPABASE_URL              — Supabase project URL
  *   SUPABASE_SERVICE_ROLE_KEY  — Service role key (bypasses RLS)
@@ -16,6 +20,7 @@
 import 'dotenv/config';
 import { createClient } from '@supabase/supabase-js';
 import * as cheerio from 'cheerio';
+import { XMLParser } from 'fast-xml-parser';
 
 // ── Supabase Setup ────────────────────────────────────────
 const SUPABASE_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
@@ -31,11 +36,30 @@ const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
 
 // ── Config ────────────────────────────────────────────────
 const TPS_NEWSROOM_URL = 'https://www.tps.ca/media-centre/news-releases/';
+const TPS_RSS_URL = 'https://www.tps.ca/media-centre/news-releases/rss/';
 const TPS_BASE = 'https://www.tps.ca';
 const NOMINATIM_URL = 'https://nominatim.openstreetmap.org/search';
-const USER_AGENT = 'GTATO-CrimeMap/1.0';
+const NOMINATIM_UA = 'GTATO-CrimeMap/1.0';
 const DAYS_BACK = 7;
 const NOW_ISO = new Date().toISOString();
+
+// Realistic browser headers to avoid 403
+const BROWSER_HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+    'Accept-Language': 'en-US,en;q=0.9',
+    'Accept-Encoding': 'gzip, deflate, br',
+    'Cache-Control': 'no-cache',
+    'Pragma': 'no-cache',
+    'Sec-Ch-Ua': '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+    'Sec-Ch-Ua-Mobile': '?0',
+    'Sec-Ch-Ua-Platform': '"Windows"',
+    'Sec-Fetch-Dest': 'document',
+    'Sec-Fetch-Mode': 'navigate',
+    'Sec-Fetch-Site': 'none',
+    'Sec-Fetch-User': '?1',
+    'Upgrade-Insecure-Requests': '1',
+};
 
 // ── Crime Type Detection ──────────────────────────────────
 const CRIME_KEYWORDS = [
@@ -52,9 +76,6 @@ const CRIME_KEYWORDS = [
     { pattern: /\btheft\b|\bstolen\b/i, type: 'Theft Over' },
 ];
 
-/**
- * Detect crime type from text using keyword patterns.
- */
 function detectCrimeType(text) {
     if (!text) return null;
     for (const { pattern, type } of CRIME_KEYWORDS) {
@@ -65,16 +86,11 @@ function detectCrimeType(text) {
 
 // ── Address Extraction ────────────────────────────────────
 
-/**
- * Extract intersection-style addresses from text.
- * Matches patterns like "Queen Street West and Jameson Avenue"
- * or "Yonge St / Dundas St".
- */
 function extractAddresses(text) {
     if (!text) return [];
     const addresses = [];
 
-    // Intersection pattern: "Street and Street" or "Street / Street"
+    // Intersection: "Queen Street West and Jameson Avenue"
     const intersectionRegex = /\b(\d*\s*[A-Z][a-z]+(?:\s+(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Drive|Dr|Lane|Ln|Court|Ct|Crescent|Cres|Way|Place|Pl|Parkway|Pkwy|Trail|Trl|Circle|Cir|Gate|Terrace|Terr)\.?\s*(?:East|West|North|South|E|W|N|S)?)\s+(?:and|&|\/|at)\s+[A-Z][a-z]+(?:\s+(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Drive|Dr|Lane|Ln|Court|Ct|Crescent|Cres|Way|Place|Pl|Parkway|Pkwy|Trail|Trl|Circle|Cir|Gate|Terrace|Terr)\.?\s*(?:East|West|North|South|E|W|N|S)?))\b/gi;
 
     let match;
@@ -82,11 +98,10 @@ function extractAddresses(text) {
         addresses.push(match[0].trim());
     }
 
-    // Numbered street address: "123 Some Street"
+    // Numbered address: "123 Some Street"
     const numberedRegex = /\b(\d{1,5}\s+[A-Z][a-z]+(?:\s+[A-Za-z]+)*\s+(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Drive|Dr|Lane|Ln|Court|Ct|Crescent|Cres|Way|Place|Pl|Parkway|Pkwy|Trail|Trl|Circle|Cir|Gate|Terrace|Terr)\.?\s*(?:East|West|North|South|E|W|N|S)?)\b/gi;
 
     while ((match = numberedRegex.exec(text)) !== null) {
-        // Avoid duplicates from intersection matches
         const addr = match[0].trim();
         if (!addresses.some(a => a.includes(addr))) {
             addresses.push(addr);
@@ -96,52 +111,34 @@ function extractAddresses(text) {
     return addresses;
 }
 
-// ── Fetch Helpers ─────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────
 
-/**
- * Fetch a URL with a browser-like User-Agent.
- */
-async function fetchPage(url) {
-    const res = await fetch(url, {
-        headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.5',
-        },
-    });
-    if (!res.ok) {
-        throw new Error(`HTTP ${res.status} ${res.statusText} for ${url}`);
-    }
-    return res.text();
-}
-
-/**
- * Sleep for ms milliseconds.
- */
 function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-// ── Step 1: Scrape newsroom listing ───────────────────────
+// ── Step 1A: Scrape HTML newsroom listing ─────────────────
 
-async function scrapeNewsListing() {
-    console.log('📰 Scraping TPS newsroom listing...');
-    console.log(`   URL: ${TPS_NEWSROOM_URL}\n`);
+async function scrapeHTMLListing() {
+    console.log('📰 Trying HTML scrape of TPS newsroom...');
+    console.log(`   URL: ${TPS_NEWSROOM_URL}`);
 
-    const html = await fetchPage(TPS_NEWSROOM_URL);
+    const res = await fetch(TPS_NEWSROOM_URL, { headers: BROWSER_HEADERS });
+    if (!res.ok) {
+        throw new Error(`HTTP ${res.status} ${res.statusText}`);
+    }
+
+    const html = await res.text();
     const $ = cheerio.load(html);
 
     const cutoff = new Date();
     cutoff.setDate(cutoff.getDate() - DAYS_BACK);
-
     const releases = [];
 
-    // TPS newsroom uses article/card-like elements for press releases
-    // Try multiple possible selectors
+    // Try multiple selectors
     const selectors = [
         'article', '.news-release', '.media-item', '.post-item',
         '.news-item', '.release-item', '.card', '.list-item',
-        'li a[href*="news-releases"]', '.view-content .views-row',
     ];
 
     let items = $([]);
@@ -153,85 +150,138 @@ async function scrapeNewsListing() {
         }
     }
 
-    // If no items found via selectors, try finding all links to news releases
     if (items.length === 0) {
-        console.log('   No structured items found, scanning all links...');
+        // Fallback: scan all links
         $('a[href]').each((_, el) => {
             const href = $(el).attr('href') || '';
             if (href.includes('news-releases/') && href !== '/media-centre/news-releases/') {
                 const title = $(el).text().trim();
                 if (title && title.length > 10) {
                     const fullUrl = href.startsWith('http') ? href : `${TPS_BASE}${href}`;
-                    releases.push({ title, url: fullUrl, date: null });
+                    releases.push({ title, url: fullUrl, date: null, description: '' });
                 }
             }
         });
-        console.log(`   Found ${releases.length} press release links`);
-        return releases;
+    } else {
+        items.each((_, el) => {
+            const $el = $(el);
+            const $link = $el.find('a').first();
+            let href = $link.attr('href') || '';
+            if (!href) return;
+            const fullUrl = href.startsWith('http') ? href : `${TPS_BASE}${href}`;
+
+            const title = $link.text().trim()
+                || $el.find('h2, h3, h4, .title').first().text().trim()
+                || '';
+            if (!title) return;
+
+            const dateText = $el.find('time, .date, .post-date, .release-date, .meta').first().text().trim()
+                || $el.find('[datetime]').first().attr('datetime')
+                || '';
+            let releaseDate = null;
+            if (dateText) {
+                const d = new Date(dateText);
+                if (!isNaN(d.getTime())) releaseDate = d;
+            }
+
+            if (releaseDate && releaseDate < cutoff) return;
+
+            releases.push({ title, url: fullUrl, date: releaseDate, description: '' });
+        });
     }
 
-    items.each((_, el) => {
-        const $el = $(el);
-
-        // Extract link
-        const $link = $el.find('a').first();
-        let href = $link.attr('href') || $el.find('a[href]').first().attr('href') || '';
-        if (!href) return;
-        const fullUrl = href.startsWith('http') ? href : `${TPS_BASE}${href}`;
-
-        // Extract title
-        const title = $link.text().trim()
-            || $el.find('h2, h3, h4, .title').first().text().trim()
-            || '';
-        if (!title) return;
-
-        // Extract date
-        const dateText = $el.find('time, .date, .post-date, .release-date, .meta').first().text().trim()
-            || $el.find('[datetime]').first().attr('datetime')
-            || '';
-        let releaseDate = null;
-        if (dateText) {
-            const d = new Date(dateText);
-            if (!isNaN(d.getTime())) releaseDate = d;
-        }
-
-        // Only include recent releases if we can parse the date
-        if (releaseDate && releaseDate < cutoff) return;
-
-        releases.push({ title, url: fullUrl, date: releaseDate });
-    });
-
-    console.log(`   Found ${releases.length} recent press releases`);
+    console.log(`   ✓ HTML scrape: ${releases.length} press releases found`);
     return releases;
 }
 
-// ── Step 2: Fetch full press release content ──────────────
+// ── Step 1B: Parse RSS feed (fallback) ────────────────────
 
-async function fetchReleaseContent(release) {
-    try {
-        console.log(`   📄 Fetching: ${release.title.substring(0, 80)}...`);
-        const html = await fetchPage(release.url);
-        const $ = cheerio.load(html);
+async function scrapeRSSFeed() {
+    console.log('📡 Trying TPS RSS feed (fallback)...');
+    console.log(`   URL: ${TPS_RSS_URL}`);
 
-        // Extract main content
-        const bodyText = $('article, .content, .post-content, .entry-content, .news-content, main')
-            .first().text().trim()
-            || $('body').text().trim();
+    const res = await fetch(TPS_RSS_URL, {
+        headers: {
+            'User-Agent': NOMINATIM_UA,
+            'Accept': 'application/rss+xml, application/xml, text/xml, */*',
+        },
+    });
+    if (!res.ok) {
+        throw new Error(`RSS feed returned HTTP ${res.status} ${res.statusText}`);
+    }
 
-        // Try to find the date from the full page if not already set
-        if (!release.date) {
-            const dateEl = $('time, .date, .post-date, [datetime]').first();
-            const dateStr = dateEl.attr('datetime') || dateEl.text().trim();
-            if (dateStr) {
-                const d = new Date(dateStr);
-                if (!isNaN(d.getTime())) release.date = d;
-            }
+    const xml = await res.text();
+    console.log(`   ✓ RSS feed downloaded (${xml.length} bytes)`);
+
+    const parser = new XMLParser({
+        ignoreAttributes: false,
+        attributeNamePrefix: '@_',
+    });
+    const parsed = parser.parse(xml);
+
+    // RSS 2.0 structure: rss > channel > item
+    const channel = parsed?.rss?.channel;
+    if (!channel) {
+        throw new Error('RSS feed has no rss > channel structure');
+    }
+
+    let items = channel.item;
+    if (!items) {
+        throw new Error('RSS feed has no items');
+    }
+    // Ensure array
+    if (!Array.isArray(items)) items = [items];
+
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - DAYS_BACK);
+    const releases = [];
+
+    for (const item of items) {
+        const title = item.title || '';
+        const link = item.link || '';
+        const pubDate = item.pubDate || '';
+        const description = item.description || '';
+
+        let releaseDate = null;
+        if (pubDate) {
+            const d = new Date(pubDate);
+            if (!isNaN(d.getTime())) releaseDate = d;
         }
 
-        return bodyText;
+        // Only include recent releases
+        if (releaseDate && releaseDate < cutoff) continue;
+
+        releases.push({
+            title: String(title).trim(),
+            url: String(link).trim(),
+            date: releaseDate,
+            description: String(description).trim(),
+        });
+    }
+
+    console.log(`   ✓ RSS feed: ${releases.length} recent press releases`);
+    return releases;
+}
+
+// ── Step 1: Combined fetch (HTML → RSS fallback) ──────────
+
+async function fetchPressReleases() {
+    // Try HTML first
+    try {
+        const releases = await scrapeHTMLListing();
+        if (releases.length > 0) return releases;
+        console.log('   ⚠️  HTML scrape returned 0 results, trying RSS...\n');
     } catch (err) {
-        console.warn(`   ⚠️  Failed to fetch ${release.url}: ${err.message}`);
-        return '';
+        console.warn(`   ⚠️  HTML scrape failed: ${err.message}`);
+        console.warn('   Falling back to RSS feed...\n');
+    }
+
+    // Fall back to RSS
+    try {
+        return await scrapeRSSFeed();
+    } catch (err) {
+        console.error(`❌ RSS feed also failed: ${err.message}`);
+        process.exit(1);
     }
 }
 
@@ -243,7 +293,7 @@ async function geocodeAddress(address) {
 
     try {
         const res = await fetch(url, {
-            headers: { 'User-Agent': USER_AGENT },
+            headers: { 'User-Agent': NOMINATIM_UA },
         });
         if (!res.ok) {
             console.warn(`   ⚠️  Nominatim HTTP ${res.status} for: ${address}`);
@@ -279,53 +329,45 @@ async function main() {
     console.log('\n🚔 GTATO — TPS Newsroom Scraper');
     console.log(`📅 Looking for press releases from the last ${DAYS_BACK} days\n`);
 
-    // Step 1: Scrape the listing page
-    let releases;
-    try {
-        releases = await scrapeNewsListing();
-    } catch (err) {
-        console.error(`❌ Failed to scrape newsroom listing: ${err.message}`);
-        process.exit(1);
-    }
+    // Step 1: Fetch press releases (HTML → RSS fallback)
+    const releases = await fetchPressReleases();
 
     if (releases.length === 0) {
         console.log('\nℹ️  No recent press releases found. Nothing to do.');
         process.exit(0);
     }
 
-    // Step 2: Fetch full content and extract details for each release
+    // Step 2: Process each release — detect crime type + extract addresses
     console.log(`\n📰 Processing ${releases.length} press releases...\n`);
     const incidents = [];
 
     for (const release of releases) {
-        const bodyText = await fetchReleaseContent(release);
-        const fullText = `${release.title} ${bodyText}`;
+        // Combine title + description for keyword and address matching
+        const fullText = `${release.title} ${release.description}`;
 
         // Detect crime type
         const crimeType = detectCrimeType(fullText);
         if (!crimeType) {
-            console.log(`   ⏭️  Skipping (no crime keywords): ${release.title.substring(0, 60)}...`);
+            console.log(`   ⏭️  Skip (no crime keywords): ${release.title.substring(0, 70)}`);
             continue;
         }
 
         // Extract addresses
         const addresses = extractAddresses(fullText);
         if (addresses.length === 0) {
-            console.log(`   ⏭️  Skipping (no address found): ${release.title.substring(0, 60)}...`);
+            console.log(`   ⏭️  Skip (no address found): ${release.title.substring(0, 70)}`);
             continue;
         }
+
+        console.log(`   ✓ ${crimeType} — ${addresses[0]}`);
 
         incidents.push({
             title: release.title,
             url: release.url,
             date: release.date,
             crimeType,
-            address: addresses[0], // use first address found
-            bodyText: fullText.substring(0, 500), // truncated for description
+            address: addresses[0],
         });
-
-        // Small delay between page fetches to be polite
-        await sleep(500);
     }
 
     console.log(`\n📊 ${incidents.length} incidents with crime type + address detected`);
