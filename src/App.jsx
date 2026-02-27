@@ -6,6 +6,7 @@
  * Supports multi-city switching (Toronto / Santa Cruz de la Sierra).
  */
 import { useState, useMemo, useCallback } from 'react';
+import { Analytics } from '@vercel/analytics/react';
 import CrimeMap from './components/CrimeMap';
 import Sidebar from './components/Sidebar';
 import { useCrimes } from './hooks/useCrimes';
@@ -102,6 +103,7 @@ function App() {
           radiusKm={radiusKm}
         />
       </main>
+      <Analytics />
     </div>
   );
 }
