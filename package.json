@@ -10,10 +10,12 @@
     "preview": "vite preview",
     "seed": "node scripts/seed.js",
     "ingest": "node scripts/ingest.js",
-    "fetch-data": "node scripts/fetchPoliceData.js"
+    "fetch-data": "node scripts/fetchPoliceData.js",
+    "fetch-newsroom": "node scripts/fetchNewsroom.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.98.0",
+    "cheerio": "^1.2.0",
     "date-fns": "^4.1.0",
     "dotenv": "^17.3.1",
     "leaflet": "^1.9.4",
