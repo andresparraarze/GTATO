@@ -1,16 +1,18 @@
 /**
  * GTATO — Toronto Police Data Ingestion
  *
- * Fetches real crime data from Toronto Police Service ArcGIS Open Data
- * and inserts it into Supabase. Uses only raw fetch() — no SDKs.
+ * Downloads full GeoJSON datasets from Toronto Police Open Data portal,
+ * filters to last 90 days in JavaScript, and inserts into Supabase.
+ *
+ * Uses only raw fetch() — no ArcGIS SDK, no wrappers.
  *
  * Datasets:
- *   1. Major Crime Indicators Open Data (1000 most recent)
- *   2. Shooting and Firearm Discharges Open Data (500 most recent)
+ *   1. Major Crime Indicators Open Data (GeoJSON)
+ *   2. Shootings & Firearm Discharges Open Data (GeoJSON)
  *
  * Env vars required:
- *   SUPABASE_URL            — Your Supabase project URL
- *   SUPABASE_SERVICE_ROLE_KEY — Service role key (bypasses RLS)
+ *   SUPABASE_URL              — Supabase project URL
+ *   SUPABASE_SERVICE_ROLE_KEY  — Service role key (bypasses RLS)
  *
  * Usage:
  *   node scripts/fetchPoliceData.js
@@ -31,34 +33,19 @@ if (!SUPABASE_URL || !SERVICE_KEY) {
 
 const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
 
-// ── Dynamic Date Filter (last 90 days) ────────────────────
+// ── GeoJSON Download URLs ─────────────────────────────────
+// These return full datasets as GeoJSON — no query params needed.
+const MCI_GEOJSON_URL =
+    'https://data.torontopolice.on.ca/datasets/TorontoPS::major-crime-indicators-open-data.geojson';
+
+const SHOOTINGS_GEOJSON_URL =
+    'https://data.torontopolice.on.ca/datasets/TorontoPS::shootings-firearm-discharges-open-data.geojson';
+
+// ── Date Filter Config ────────────────────────────────────
 const DAYS_BACK = 90;
 const cutoffDate = new Date();
 cutoffDate.setDate(cutoffDate.getDate() - DAYS_BACK);
-// ArcGIS date format: epoch milliseconds
-const cutoffEpoch = cutoffDate.getTime();
-const dateWhere = encodeURIComponent(`OCC_DATE >= ${cutoffEpoch}`);
-
-console.log(`📅 Date filter: last ${DAYS_BACK} days (since ${cutoffDate.toISOString().split('T')[0]})`);
-
-// ── ArcGIS Query URLs ─────────────────────────────────────
-const BASE = 'https://services.arcgis.com/S9th0jAJ7bqgIRjw/ArcGIS/rest/services';
-
-const MCI_QUERY_URL = `${BASE}/Major_Crime_Indicators_Open_Data/FeatureServer/0/query`
-    + `?where=${dateWhere}`
-    + '&outFields=EVENT_UNIQUE_ID,OCC_DATE,CSI_CATEGORY,OFFENCE,LOCATION_TYPE,PREMISES_TYPE,NEIGHBOURHOOD_158,LAT_WGS84,LONG_WGS84'
-    + '&resultRecordCount=2000'
-    + '&orderByFields=OCC_DATE%20DESC'
-    + '&outSR=4326'
-    + '&f=json';
-
-const SHOOTINGS_QUERY_URL = `${BASE}/Shooting_and_Firearm_Discharges_Open_Data/FeatureServer/0/query`
-    + `?where=${dateWhere}`
-    + '&outFields=*'
-    + '&resultRecordCount=1000'
-    + '&orderByFields=OCC_DATE%20DESC'
-    + '&outSR=4326'
-    + '&f=json';
+const cutoffMs = cutoffDate.getTime();
 
 // Timestamp for this ingestion run
 const NOW_ISO = new Date().toISOString();
@@ -76,91 +63,135 @@ function normalizeCrimeType(category) {
     return 'Theft';
 }
 
+// ── Helpers ───────────────────────────────────────────────
+async function fetchGeoJSON(url, label) {
+    console.log(`📡 Downloading ${label}...`);
+    console.log(`   URL: ${url}`);
+
+    const res = await fetch(url);
+    if (!res.ok) {
+        console.error(`❌ ${label} download failed: HTTP ${res.status} ${res.statusText}`);
+        process.exit(1);
+    }
+
+    const geojson = await res.json();
+
+    if (!geojson.features || !Array.isArray(geojson.features)) {
+        console.error(`❌ ${label}: response is not valid GeoJSON (no features array)`);
+        process.exit(1);
+    }
+
+    console.log(`   ✓ Downloaded ${geojson.features.length} total features`);
+    return geojson.features;
+}
+
+/**
+ * Extract a date (epoch ms) from a GeoJSON feature's properties.
+ * Tries common field names used by Toronto Police datasets.
+ */
+function extractDate(props) {
+    const raw = props.OCC_DATE || props.occ_date || props.REPORT_DATE || props.report_date;
+    if (!raw) return null;
+    // Could be epoch ms (number) or ISO string
+    if (typeof raw === 'number') return raw;
+    const parsed = new Date(raw).getTime();
+    return isNaN(parsed) ? null : parsed;
+}
+
+/**
+ * Extract lat/lng from a GeoJSON feature.
+ * GeoJSON coordinates are [longitude, latitude].
+ */
+function extractCoords(feature) {
+    const props = feature.properties || {};
+    // Prefer explicit lat/lng fields if available
+    if (props.LAT_WGS84 != null && props.LONG_WGS84 != null) {
+        return { lat: props.LAT_WGS84, lng: props.LONG_WGS84 };
+    }
+    // Fall back to GeoJSON geometry.coordinates [lng, lat]
+    if (feature.geometry && feature.geometry.coordinates) {
+        const [lng, lat] = feature.geometry.coordinates;
+        return { lat, lng };
+    }
+    return null;
+}
+
 // ── Main ──────────────────────────────────────────────────
 async function main() {
-    console.log('\n🚔 GTATO — Toronto Police Data Ingestion\n');
+    console.log('\n🚔 GTATO — Toronto Police Data Ingestion');
+    console.log(`📅 Filtering to last ${DAYS_BACK} days (since ${cutoffDate.toISOString().split('T')[0]})\n`);
 
-    // 1. Fetch Major Crime Indicators
-    console.log('📡 Fetching Major Crime Indicators...');
-    const mciRes = await fetch(MCI_QUERY_URL);
-    if (!mciRes.ok) {
-        console.error(`❌ MCI fetch failed: HTTP ${mciRes.status}`);
-        process.exit(1);
-    }
-    const mciJson = await mciRes.json();
-    if (mciJson.error) {
-        console.error('❌ MCI ArcGIS error:', JSON.stringify(mciJson.error));
-        process.exit(1);
-    }
-    const mciFeatures = mciJson.features || [];
-    console.log(`   ✓ Got ${mciFeatures.length} MCI features`);
+    // 1. Download both datasets
+    const [mciFeatures, shootFeatures] = await Promise.all([
+        fetchGeoJSON(MCI_GEOJSON_URL, 'Major Crime Indicators'),
+        fetchGeoJSON(SHOOTINGS_GEOJSON_URL, 'Shootings & Firearm Discharges'),
+    ]);
 
-    // 2. Fetch Shootings
-    console.log('📡 Fetching Shootings & Firearm Discharges...');
-    const shootRes = await fetch(SHOOTINGS_QUERY_URL);
-    if (!shootRes.ok) {
-        console.error(`❌ Shootings fetch failed: HTTP ${shootRes.status}`);
-        process.exit(1);
-    }
-    const shootJson = await shootRes.json();
-    if (shootJson.error) {
-        console.error('❌ Shootings ArcGIS error:', JSON.stringify(shootJson.error));
-        process.exit(1);
-    }
-    const shootFeatures = shootJson.features || [];
-    console.log(`   ✓ Got ${shootFeatures.length} Shooting features`);
-
-    // 3. Transform MCI features
+    // 2. Transform + filter MCI features (last 90 days)
     const mciRows = [];
+    let mciSkippedDate = 0;
+    let mciSkippedCoords = 0;
+
     for (const f of mciFeatures) {
-        const a = f.attributes;
-        const lat = a.LAT_WGS84 ?? f.geometry?.y;
-        const lng = a.LONG_WGS84 ?? f.geometry?.x;
-        if (lat == null || lng == null || lat === 0 || lng === 0) continue;
+        const props = f.properties || {};
+        const dateMs = extractDate(props);
+        if (dateMs == null || dateMs < cutoffMs) { mciSkippedDate++; continue; }
+
+        const coords = extractCoords(f);
+        if (!coords || coords.lat === 0 || coords.lng === 0) { mciSkippedCoords++; continue; }
+
         mciRows.push({
-            crime_type: normalizeCrimeType(a.CSI_CATEGORY),
-            lat,
-            lng,
-            date_reported: a.OCC_DATE ? new Date(a.OCC_DATE).toISOString() : new Date().toISOString(),
-            neighbourhood: a.NEIGHBOURHOOD_158 || null,
-            address: a.LOCATION_TYPE || a.PREMISES_TYPE || null,
-            description: a.OFFENCE || a.CSI_CATEGORY || null,
+            crime_type: normalizeCrimeType(props.CSI_CATEGORY || props.MCI_CATEGORY),
+            lat: coords.lat,
+            lng: coords.lng,
+            date_reported: new Date(dateMs).toISOString(),
+            neighbourhood: props.NEIGHBOURHOOD_158 || props.NEIGHBOURHOOD_140 || null,
+            address: props.LOCATION_TYPE || props.PREMISES_TYPE || null,
+            description: props.OFFENCE || props.CSI_CATEGORY || props.MCI_CATEGORY || null,
             source_url: 'https://data.torontopolice.on.ca',
             last_updated: NOW_ISO,
         });
     }
+    console.log(`\n📊 MCI: ${mciRows.length} kept, ${mciSkippedDate} outside date range, ${mciSkippedCoords} missing coords`);
 
-    // 4. Transform Shooting features
+    // 3. Transform + filter Shooting features (last 90 days)
     const shootRows = [];
+    let shootSkippedDate = 0;
+    let shootSkippedCoords = 0;
+
     for (const f of shootFeatures) {
-        const a = f.attributes;
-        const lat = a.LAT_WGS84 ?? f.geometry?.y;
-        const lng = a.LONG_WGS84 ?? f.geometry?.x;
-        if (lat == null || lng == null || lat === 0 || lng === 0) continue;
+        const props = f.properties || {};
+        const dateMs = extractDate(props);
+        if (dateMs == null || dateMs < cutoffMs) { shootSkippedDate++; continue; }
+
+        const coords = extractCoords(f);
+        if (!coords || coords.lat === 0 || coords.lng === 0) { shootSkippedCoords++; continue; }
+
         shootRows.push({
             crime_type: 'Shooting',
-            lat,
-            lng,
-            date_reported: a.OCC_DATE ? new Date(a.OCC_DATE).toISOString() : new Date().toISOString(),
-            neighbourhood: a.NEIGHBOURHOOD_158 || null,
-            address: a.LOCATION_TYPE || a.PREMISES_TYPE || null,
-            description: a.INJURIES != null
-                ? `Firearm discharge — ${a.INJURIES} injury(ies)`
+            lat: coords.lat,
+            lng: coords.lng,
+            date_reported: new Date(dateMs).toISOString(),
+            neighbourhood: props.NEIGHBOURHOOD_158 || props.NEIGHBOURHOOD_140 || null,
+            address: props.LOCATION_TYPE || props.PREMISES_TYPE || null,
+            description: props.INJURIES != null
+                ? `Firearm discharge — ${props.INJURIES} injury(ies)`
                 : 'Firearm discharge',
             source_url: 'https://data.torontopolice.on.ca',
             last_updated: NOW_ISO,
         });
     }
+    console.log(`📊 Shootings: ${shootRows.length} kept, ${shootSkippedDate} outside date range, ${shootSkippedCoords} missing coords`);
 
     const allRows = [...mciRows, ...shootRows];
-    console.log(`\n📊 Transformed records: MCI=${mciRows.length}, Shootings=${shootRows.length}, Total=${allRows.length}`);
+    console.log(`📊 Total: ${allRows.length} records to insert`);
 
     if (allRows.length === 0) {
-        console.error('❌ No valid records to insert.');
+        console.error('❌ No valid records to insert after filtering.');
         process.exit(1);
     }
 
-    // 5. Clear old data
+    // 4. Clear old data
     console.log('\n🗑️  Clearing old crime data...');
     const { error: delErr } = await supabase
         .from('crimes')
@@ -172,7 +203,7 @@ async function main() {
     }
     console.log('   ✓ Old data cleared');
 
-    // 6. Insert in batches of 500
+    // 5. Insert in batches of 500
     console.log('\n📥 Inserting new data...');
     const BATCH = 500;
     let total = 0;
@@ -187,7 +218,7 @@ async function main() {
         console.log(`   ✓ Batch ${Math.ceil((i + 1) / BATCH)}: ${data.length} rows`);
     }
 
-    // 7. Summary
+    // 6. Summary
     const counts = {};
     allRows.forEach(r => { counts[r.crime_type] = (counts[r.crime_type] || 0) + 1; });
 
