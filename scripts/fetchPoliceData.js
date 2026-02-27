@@ -7,8 +7,8 @@
  * Uses only raw fetch() — no ArcGIS SDK, no wrappers.
  *
  * Datasets:
- *   1. Major Crime Indicators Open Data (GeoJSON)
- *   2. Shootings & Firearm Discharges Open Data (GeoJSON)
+ *   1. Major Crime Indicators Open Data (GeoJSON) — REQUIRED
+ *   2. Shootings & Firearm Discharges Open Data (GeoJSON) — OPTIONAL
  *
  * Env vars required:
  *   SUPABASE_URL              — Supabase project URL
@@ -34,12 +34,11 @@ if (!SUPABASE_URL || !SERVICE_KEY) {
 const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
 
 // ── GeoJSON Download URLs ─────────────────────────────────
-// These return full datasets as GeoJSON — no query params needed.
 const MCI_GEOJSON_URL =
     'https://data.torontopolice.on.ca/datasets/TorontoPS::major-crime-indicators-open-data.geojson';
 
 const SHOOTINGS_GEOJSON_URL =
-    'https://data.torontopolice.on.ca/datasets/TorontoPS::shootings-firearm-discharges-open-data.geojson';
+    'https://data.torontopolice.on.ca/datasets/TorontoPS::shooting-and-firearm-discharges-open-data.geojson';
 
 // ── Date Filter Config ────────────────────────────────────
 const DAYS_BACK = 90;
@@ -64,25 +63,50 @@ function normalizeCrimeType(category) {
 }
 
 // ── Helpers ───────────────────────────────────────────────
-async function fetchGeoJSON(url, label) {
+
+/**
+ * Fetch a GeoJSON dataset. If `required` is true, the script exits on failure.
+ * If false, it logs a warning and returns an empty array so the rest continues.
+ */
+async function fetchGeoJSON(url, label, required = true) {
     console.log(`📡 Downloading ${label}...`);
     console.log(`   URL: ${url}`);
 
-    const res = await fetch(url);
-    if (!res.ok) {
-        console.error(`❌ ${label} download failed: HTTP ${res.status} ${res.statusText}`);
-        process.exit(1);
+    try {
+        const res = await fetch(url);
+        if (!res.ok) {
+            const msg = `${label} download failed: HTTP ${res.status} ${res.statusText}`;
+            if (required) {
+                console.error(`❌ ${msg}`);
+                process.exit(1);
+            }
+            console.warn(`⚠️  ${msg} — skipping this dataset`);
+            return [];
+        }
+
+        const geojson = await res.json();
+
+        if (!geojson.features || !Array.isArray(geojson.features)) {
+            const msg = `${label}: response is not valid GeoJSON (no features array)`;
+            if (required) {
+                console.error(`❌ ${msg}`);
+                process.exit(1);
+            }
+            console.warn(`⚠️  ${msg} — skipping this dataset`);
+            return [];
+        }
+
+        console.log(`   ✓ Downloaded ${geojson.features.length} total features`);
+        return geojson.features;
+    } catch (err) {
+        const msg = `${label} fetch error: ${err.message}`;
+        if (required) {
+            console.error(`❌ ${msg}`);
+            process.exit(1);
+        }
+        console.warn(`⚠️  ${msg} — skipping this dataset`);
+        return [];
     }
-
-    const geojson = await res.json();
-
-    if (!geojson.features || !Array.isArray(geojson.features)) {
-        console.error(`❌ ${label}: response is not valid GeoJSON (no features array)`);
-        process.exit(1);
-    }
-
-    console.log(`   ✓ Downloaded ${geojson.features.length} total features`);
-    return geojson.features;
 }
 
 /**
@@ -92,7 +116,6 @@ async function fetchGeoJSON(url, label) {
 function extractDate(props) {
     const raw = props.OCC_DATE || props.occ_date || props.REPORT_DATE || props.report_date;
     if (!raw) return null;
-    // Could be epoch ms (number) or ISO string
     if (typeof raw === 'number') return raw;
     const parsed = new Date(raw).getTime();
     return isNaN(parsed) ? null : parsed;
@@ -100,18 +123,18 @@ function extractDate(props) {
 
 /**
  * Extract lat/lng from a GeoJSON feature.
+ * Prefers explicit LAT_WGS84/LONG_WGS84 fields, falls back to geometry.coordinates.
  * GeoJSON coordinates are [longitude, latitude].
  */
 function extractCoords(feature) {
     const props = feature.properties || {};
-    // Prefer explicit lat/lng fields if available
-    if (props.LAT_WGS84 != null && props.LONG_WGS84 != null) {
+    if (props.LAT_WGS84 != null && props.LONG_WGS84 != null
+        && props.LAT_WGS84 !== 0 && props.LONG_WGS84 !== 0) {
         return { lat: props.LAT_WGS84, lng: props.LONG_WGS84 };
     }
-    // Fall back to GeoJSON geometry.coordinates [lng, lat]
     if (feature.geometry && feature.geometry.coordinates) {
         const [lng, lat] = feature.geometry.coordinates;
-        return { lat, lng };
+        if (lat !== 0 && lng !== 0) return { lat, lng };
     }
     return null;
 }
@@ -122,10 +145,10 @@ async function main() {
     console.log(`📅 Filtering to last ${DAYS_BACK} days (since ${cutoffDate.toISOString().split('T')[0]})\n`);
 
     // 1. Download both datasets
-    const [mciFeatures, shootFeatures] = await Promise.all([
-        fetchGeoJSON(MCI_GEOJSON_URL, 'Major Crime Indicators'),
-        fetchGeoJSON(SHOOTINGS_GEOJSON_URL, 'Shootings & Firearm Discharges'),
-    ]);
+    // MCI is required — script exits if it fails.
+    // Shootings is optional — script continues with just MCI data if shootings fails.
+    const mciFeatures = await fetchGeoJSON(MCI_GEOJSON_URL, 'Major Crime Indicators', true);
+    const shootFeatures = await fetchGeoJSON(SHOOTINGS_GEOJSON_URL, 'Shootings & Firearm Discharges', false);
 
     // 2. Transform + filter MCI features (last 90 days)
     const mciRows = [];
@@ -138,7 +161,7 @@ async function main() {
         if (dateMs == null || dateMs < cutoffMs) { mciSkippedDate++; continue; }
 
         const coords = extractCoords(f);
-        if (!coords || coords.lat === 0 || coords.lng === 0) { mciSkippedCoords++; continue; }
+        if (!coords) { mciSkippedCoords++; continue; }
 
         mciRows.push({
             crime_type: normalizeCrimeType(props.CSI_CATEGORY || props.MCI_CATEGORY),
@@ -165,7 +188,7 @@ async function main() {
         if (dateMs == null || dateMs < cutoffMs) { shootSkippedDate++; continue; }
 
         const coords = extractCoords(f);
-        if (!coords || coords.lat === 0 || coords.lng === 0) { shootSkippedCoords++; continue; }
+        if (!coords) { shootSkippedCoords++; continue; }
 
         shootRows.push({
             crime_type: 'Shooting',
@@ -225,6 +248,9 @@ async function main() {
     console.log(`\n✅ Done — inserted ${total} crime records\n`);
     console.log('📋 Breakdown:');
     Object.entries(counts).sort((a, b) => b[1] - a[1]).forEach(([t, c]) => console.log(`   ${t}: ${c}`));
+    if (shootFeatures.length === 0 && shootRows.length === 0) {
+        console.log('\n⚠️  Note: Shootings dataset was unavailable — only MCI data was ingested.');
+    }
     console.log('');
 }
 
