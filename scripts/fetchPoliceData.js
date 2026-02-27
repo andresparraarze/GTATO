@@ -1,199 +1,189 @@
 /**
- * GTATO — Real Toronto Police Data Ingestion
+ * GTATO — Toronto Police Data Ingestion
  *
- * Fetches crime data from Toronto Police Service ArcGIS Open Data:
- *   1. Major Crime Indicators (MCI) — 1000 most recent
- *   2. Shootings & Firearm Discharges — 500 most recent
+ * Fetches real crime data from Toronto Police Service ArcGIS Open Data
+ * and inserts it into Supabase. Uses only raw fetch() — no SDKs.
  *
- * Clears old data and inserts fresh records into the Supabase `crimes` table.
+ * Datasets:
+ *   1. Major Crime Indicators Open Data (1000 most recent)
+ *   2. Shooting and Firearm Discharges Open Data (500 most recent)
+ *
+ * Env vars required:
+ *   SUPABASE_URL            — Your Supabase project URL
+ *   SUPABASE_SERVICE_ROLE_KEY — Service role key (bypasses RLS)
  *
  * Usage:
- *   VITE_SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=... node scripts/fetchPoliceData.js
- *   — or —
- *   npm run fetch-data  (with .env.local populated)
+ *   node scripts/fetchPoliceData.js
+ *   npm run fetch-data
  */
 import 'dotenv/config';
 import { createClient } from '@supabase/supabase-js';
 
-// ─── Config ──────────────────────────────────────────────
+// ── Supabase Setup ────────────────────────────────────────
 const SUPABASE_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 if (!SUPABASE_URL || !SERVICE_KEY) {
-    console.error('❌ Missing env vars. Need VITE_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.');
+    console.error('❌ Missing env vars.');
+    console.error('   Need: SUPABASE_URL (or VITE_SUPABASE_URL) and SUPABASE_SERVICE_ROLE_KEY');
     process.exit(1);
 }
 
 const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
 
-// ─── ArcGIS Endpoints ───────────────────────────────────
-function buildArcGISUrl(service, recordCount) {
-    const base = `https://services.arcgis.com/S9th0jAJ7bqgIRjw/arcgis/rest/services/${service}/FeatureServer/0/query`;
-    const params = new URLSearchParams({
-        where: '1=1',
-        outFields: '*',
-        resultRecordCount: String(recordCount),
-        orderByFields: 'OCC_DATE DESC',
-        f: 'json',
-    });
-    return `${base}?${params.toString()}`;
+// ── ArcGIS Query URLs ─────────────────────────────────────
+// Correct service names from: services.arcgis.com/S9th0jAJ7bqgIRjw/arcgis/rest/services?f=json
+const BASE = 'https://services.arcgis.com/S9th0jAJ7bqgIRjw/ArcGIS/rest/services';
+
+const MCI_QUERY_URL = `${BASE}/Major_Crime_Indicators_Open_Data/FeatureServer/0/query`
+    + '?where=1%3D1'
+    + '&outFields=EVENT_UNIQUE_ID,OCC_DATE,CSI_CATEGORY,OFFENCE,LOCATION_TYPE,PREMISES_TYPE,NEIGHBOURHOOD_158,LAT_WGS84,LONG_WGS84'
+    + '&resultRecordCount=1000'
+    + '&orderByFields=OCC_DATE%20DESC'
+    + '&outSR=4326'
+    + '&f=json';
+
+const SHOOTINGS_QUERY_URL = `${BASE}/Shooting_and_Firearm_Discharges_Open_Data/FeatureServer/0/query`
+    + '?where=1%3D1'
+    + '&outFields=*'
+    + '&resultRecordCount=500'
+    + '&orderByFields=OCC_DATE%20DESC'
+    + '&outSR=4326'
+    + '&f=json';
+
+// ── Crime Type Mapping ────────────────────────────────────
+function normalizeCrimeType(category) {
+    if (!category) return 'Theft';
+    const cat = category.toLowerCase();
+    if (cat.includes('assault')) return 'Assault';
+    if (cat.includes('robbery') || cat.includes('theft over')) return 'Theft';
+    if (cat.includes('break') && cat.includes('enter')) return 'Break & Enter';
+    if (cat.includes('auto theft')) return 'Auto Theft';
+    if (cat.includes('shoot') || cat.includes('firearm')) return 'Shooting';
+    if (cat.includes('homicide')) return 'Assault';
+    return 'Theft';
 }
 
-const MCI_URL = buildArcGISUrl('MCI_2014_to_Present', 1000);
-const SHOOTINGS_URL = buildArcGISUrl('Shootings_and_Firearm_Discharges', 500);
-
-// ─── Crime Type Normalization ───────────────────────────
-const MCI_CATEGORY_MAP = {
-    'Assault': 'Assault',
-    'Robbery': 'Theft',
-    'Break and Enter': 'Break & Enter',
-    'Auto Theft': 'Auto Theft',
-    'Theft Over': 'Theft',
-    'Homicide': 'Assault',
-    'Shooting': 'Shooting',
-};
-
-function normalizeCrimeType(mciCategory) {
-    if (!mciCategory) return 'Theft';
-    // Try exact match first
-    if (MCI_CATEGORY_MAP[mciCategory]) return MCI_CATEGORY_MAP[mciCategory];
-    // Case-insensitive fuzzy match
-    const lower = mciCategory.toLowerCase();
-    if (lower.includes('assault')) return 'Assault';
-    if (lower.includes('robbery') || lower.includes('theft')) return 'Theft';
-    if (lower.includes('break') || lower.includes('enter')) return 'Break & Enter';
-    if (lower.includes('auto')) return 'Auto Theft';
-    if (lower.includes('shoot') || lower.includes('firearm')) return 'Shooting';
-    if (lower.includes('homicide')) return 'Assault';
-    return 'Theft'; // fallback
-}
-
-// ─── Fetch & Transform ──────────────────────────────────
-async function fetchArcGIS(url, label) {
-    console.log(`📡 Fetching ${label}...`);
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`HTTP ${res.status} fetching ${label}`);
-    const json = await res.json();
-
-    if (json.error) {
-        throw new Error(`ArcGIS error: ${json.error.message || JSON.stringify(json.error)}`);
-    }
-
-    const features = json.features || [];
-    console.log(`   ✓ Received ${features.length} features from ${label}`);
-    return features;
-}
-
-function transformMCI(feature) {
-    const { attributes, geometry } = feature;
-    if (!geometry || geometry.x == null || geometry.y == null) return null;
-
-    return {
-        crime_type: normalizeCrimeType(attributes.MCI_CATEGORY),
-        lat: geometry.y,
-        lng: geometry.x,
-        date_reported: attributes.OCC_DATE
-            ? new Date(attributes.OCC_DATE).toISOString()
-            : new Date().toISOString(),
-        neighbourhood: attributes.NEIGHBOURHOOD_158 || attributes.NEIGHBOURHOOD_140 || null,
-        address: attributes.LOCATION_TYPE || null,
-        description: attributes.OFFENCE || attributes.MCI_CATEGORY || null,
-        source_url: 'https://data.torontopolice.on.ca',
-    };
-}
-
-function transformShooting(feature) {
-    const { attributes, geometry } = feature;
-    if (!geometry || geometry.x == null || geometry.y == null) return null;
-
-    return {
-        crime_type: 'Shooting',
-        lat: geometry.y,
-        lng: geometry.x,
-        date_reported: attributes.OCC_DATE
-            ? new Date(attributes.OCC_DATE).toISOString()
-            : new Date().toISOString(),
-        neighbourhood: attributes.NEIGHBOURHOOD_158 || attributes.NEIGHBOURHOOD_140 || null,
-        address: attributes.LOCATION_TYPE || null,
-        description: attributes.INJURIES
-            ? `Firearm discharge — ${attributes.INJURIES} injury(ies)`
-            : 'Firearm discharge',
-        source_url: 'https://data.torontopolice.on.ca',
-    };
-}
-
-// ─── Main ────────────────────────────────────────────────
+// ── Main ──────────────────────────────────────────────────
 async function main() {
     console.log('\n🚔 GTATO — Toronto Police Data Ingestion\n');
 
-    // 1. Fetch from both endpoints
-    const [mciFeatures, shootingFeatures] = await Promise.all([
-        fetchArcGIS(MCI_URL, 'Major Crime Indicators'),
-        fetchArcGIS(SHOOTINGS_URL, 'Shootings & Firearm Discharges'),
-    ]);
+    // 1. Fetch Major Crime Indicators
+    console.log('📡 Fetching Major Crime Indicators...');
+    const mciRes = await fetch(MCI_QUERY_URL);
+    if (!mciRes.ok) {
+        console.error(`❌ MCI fetch failed: HTTP ${mciRes.status}`);
+        process.exit(1);
+    }
+    const mciJson = await mciRes.json();
+    if (mciJson.error) {
+        console.error('❌ MCI ArcGIS error:', JSON.stringify(mciJson.error));
+        process.exit(1);
+    }
+    const mciFeatures = mciJson.features || [];
+    console.log(`   ✓ Got ${mciFeatures.length} MCI features`);
 
-    // 2. Transform
-    const mciRows = mciFeatures.map(transformMCI).filter(Boolean);
-    const shootingRows = shootingFeatures.map(transformShooting).filter(Boolean);
-    const allRows = [...mciRows, ...shootingRows];
+    // 2. Fetch Shootings
+    console.log('📡 Fetching Shootings & Firearm Discharges...');
+    const shootRes = await fetch(SHOOTINGS_QUERY_URL);
+    if (!shootRes.ok) {
+        console.error(`❌ Shootings fetch failed: HTTP ${shootRes.status}`);
+        process.exit(1);
+    }
+    const shootJson = await shootRes.json();
+    if (shootJson.error) {
+        console.error('❌ Shootings ArcGIS error:', JSON.stringify(shootJson.error));
+        process.exit(1);
+    }
+    const shootFeatures = shootJson.features || [];
+    console.log(`   ✓ Got ${shootFeatures.length} Shooting features`);
 
-    console.log(`\n📊 Transformed ${allRows.length} total records`);
-    console.log(`   MCI: ${mciRows.length}  |  Shootings: ${shootingRows.length}`);
-
-    if (allRows.length === 0) {
-        console.log('⚠️  No records to insert. Exiting.');
-        process.exit(0);
+    // 3. Transform MCI features
+    const mciRows = [];
+    for (const f of mciFeatures) {
+        const a = f.attributes;
+        const lat = a.LAT_WGS84 ?? f.geometry?.y;
+        const lng = a.LONG_WGS84 ?? f.geometry?.x;
+        if (lat == null || lng == null || lat === 0 || lng === 0) continue;
+        mciRows.push({
+            crime_type: normalizeCrimeType(a.CSI_CATEGORY),
+            lat,
+            lng,
+            date_reported: a.OCC_DATE ? new Date(a.OCC_DATE).toISOString() : new Date().toISOString(),
+            neighbourhood: a.NEIGHBOURHOOD_158 || null,
+            address: a.LOCATION_TYPE || a.PREMISES_TYPE || null,
+            description: a.OFFENCE || a.CSI_CATEGORY || null,
+            source_url: 'https://data.torontopolice.on.ca',
+        });
     }
 
-    // 3. Clear old data
-    console.log('\n🗑️  Clearing existing crimes data...');
-    const { error: deleteError } = await supabase
+    // 4. Transform Shooting features
+    const shootRows = [];
+    for (const f of shootFeatures) {
+        const a = f.attributes;
+        const lat = a.LAT_WGS84 ?? f.geometry?.y;
+        const lng = a.LONG_WGS84 ?? f.geometry?.x;
+        if (lat == null || lng == null || lat === 0 || lng === 0) continue;
+        shootRows.push({
+            crime_type: 'Shooting',
+            lat,
+            lng,
+            date_reported: a.OCC_DATE ? new Date(a.OCC_DATE).toISOString() : new Date().toISOString(),
+            neighbourhood: a.NEIGHBOURHOOD_158 || null,
+            address: a.LOCATION_TYPE || a.PREMISES_TYPE || null,
+            description: a.INJURIES != null
+                ? `Firearm discharge — ${a.INJURIES} injury(ies)`
+                : 'Firearm discharge',
+            source_url: 'https://data.torontopolice.on.ca',
+        });
+    }
+
+    const allRows = [...mciRows, ...shootRows];
+    console.log(`\n📊 Transformed records: MCI=${mciRows.length}, Shootings=${shootRows.length}, Total=${allRows.length}`);
+
+    if (allRows.length === 0) {
+        console.error('❌ No valid records to insert.');
+        process.exit(1);
+    }
+
+    // 5. Clear old data
+    console.log('\n🗑️  Clearing old crime data...');
+    const { error: delErr } = await supabase
         .from('crimes')
         .delete()
-        .neq('id', '00000000-0000-0000-0000-000000000000'); // delete all rows
-
-    if (deleteError) {
-        console.error('❌ Failed to clear old data:', deleteError.message);
+        .neq('id', '00000000-0000-0000-0000-000000000000');
+    if (delErr) {
+        console.error('❌ Delete failed:', delErr.message);
         process.exit(1);
     }
     console.log('   ✓ Old data cleared');
 
-    // 4. Insert in batches of 500
-    const BATCH_SIZE = 500;
-    let inserted = 0;
-
-    for (let i = 0; i < allRows.length; i += BATCH_SIZE) {
-        const batch = allRows.slice(i, i + BATCH_SIZE);
-        const { data, error } = await supabase
-            .from('crimes')
-            .insert(batch)
-            .select('id');
-
+    // 6. Insert in batches of 500
+    console.log('\n📥 Inserting new data...');
+    const BATCH = 500;
+    let total = 0;
+    for (let i = 0; i < allRows.length; i += BATCH) {
+        const batch = allRows.slice(i, i + BATCH);
+        const { data, error } = await supabase.from('crimes').insert(batch).select('id');
         if (error) {
-            console.error(`❌ Batch insert failed (rows ${i}–${i + batch.length}):`, error.message);
+            console.error(`❌ Insert failed at row ${i}:`, error.message);
             process.exit(1);
         }
-
-        inserted += data.length;
-        console.log(`   ✓ Inserted batch ${Math.floor(i / BATCH_SIZE) + 1}: ${data.length} rows`);
+        total += data.length;
+        console.log(`   ✓ Batch ${Math.ceil((i + 1) / BATCH)}: ${data.length} rows`);
     }
 
-    console.log(`\n✅ Done! Inserted ${inserted} crime records into Supabase.`);
+    // 7. Summary
+    const counts = {};
+    allRows.forEach(r => { counts[r.crime_type] = (counts[r.crime_type] || 0) + 1; });
 
-    // Summary by type
-    const typeCounts = {};
-    allRows.forEach((r) => {
-        typeCounts[r.crime_type] = (typeCounts[r.crime_type] || 0) + 1;
-    });
-    console.log('\n📋 Breakdown by crime type:');
-    Object.entries(typeCounts)
-        .sort((a, b) => b[1] - a[1])
-        .forEach(([type, count]) => console.log(`   ${type}: ${count}`));
-
+    console.log(`\n✅ Done — inserted ${total} crime records\n`);
+    console.log('📋 Breakdown:');
+    Object.entries(counts).sort((a, b) => b[1] - a[1]).forEach(([t, c]) => console.log(`   ${t}: ${c}`));
     console.log('');
 }
 
-main().catch((err) => {
+main().catch(err => {
     console.error('❌ Fatal error:', err);
     process.exit(1);
 });
