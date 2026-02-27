@@ -44,9 +44,9 @@ const DIRECT_JSON_URL =
     'https://ckan0.cf.opendata.inter.prod-toronto.ca/dataset/6909ea60-ef0e-465f-b5d0-43106b6b9130/resource/0f15c1f7-491f-44f8-b278-91c65520d6a4/download/major-crime-indicators.json';
 
 // ── Date Filter Config ────────────────────────────────────
-const DAYS_BACK = 90;
+const YEARS_BACK = 2;
 const cutoffDate = new Date();
-cutoffDate.setDate(cutoffDate.getDate() - DAYS_BACK);
+cutoffDate.setFullYear(cutoffDate.getFullYear() - YEARS_BACK);
 const cutoffMs = cutoffDate.getTime();
 
 // Timestamp for this ingestion run
@@ -138,31 +138,60 @@ async function fetchRecords() {
 }
 
 /**
- * Parse a date string and return epoch ms, or null.
+ * Parse a date value and return epoch ms, or null.
+ * Handles ISO strings, YYYY/MM/DD, YYYY-MM-DD, epoch numbers,
+ * and other common date formats from the CKAN portal.
  */
 function parseDate(raw) {
-    if (!raw) return null;
+    if (raw == null || raw === '') return null;
+    // Epoch number
     if (typeof raw === 'number') return raw;
-    const parsed = new Date(raw).getTime();
-    return isNaN(parsed) ? null : parsed;
+    // String — try direct parse first
+    const str = String(raw).trim();
+    let ms = new Date(str).getTime();
+    if (!isNaN(ms)) return ms;
+    // Try replacing slashes with dashes (YYYY/MM/DD → YYYY-MM-DD)
+    ms = new Date(str.replace(/\//g, '-')).getTime();
+    if (!isNaN(ms)) return ms;
+    return null;
+}
+
+/**
+ * Try multiple field names to find a usable date on a record.
+ */
+function extractDate(rec) {
+    return parseDate(rec.OCC_DATE)
+        ?? parseDate(rec.REPORT_DATE)
+        ?? parseDate(rec.occ_date)
+        ?? parseDate(rec.report_date)
+        ?? null;
 }
 
 // ── Main ──────────────────────────────────────────────────
 async function main() {
     console.log('\n🚔 GTATO — Toronto Crime Data Ingestion (CKAN)');
-    console.log(`📅 Filtering to last ${DAYS_BACK} days (since ${cutoffDate.toISOString().split('T')[0]})\n`);
+    console.log(`📅 Filtering to last ${YEARS_BACK} years (since ${cutoffDate.toISOString().split('T')[0]})\n`);
 
     // 1. Download records (Datastore API → direct JSON fallback)
     const records = await fetchRecords();
 
-    // 2. Transform + filter to last 90 days
+    // Debug: log first record so we can verify field names and date format
+    if (records.length > 0) {
+        console.log('\n🔍 Sample record (first):');
+        console.log(JSON.stringify(records[0], null, 2));
+        console.log('');
+    }
+
+    // 2. Transform + filter to last 2 years
     const rows = [];
     let skippedDate = 0;
     let skippedCoords = 0;
+    let skippedDateNull = 0;
 
     for (const rec of records) {
-        const dateMs = parseDate(rec.OCC_DATE);
-        if (dateMs == null || dateMs < cutoffMs) { skippedDate++; continue; }
+        const dateMs = extractDate(rec);
+        if (dateMs == null) { skippedDateNull++; continue; }
+        if (dateMs < cutoffMs) { skippedDate++; continue; }
 
         const lat = parseFloat(rec.LAT);
         const lng = parseFloat(rec.LONG);
@@ -181,11 +210,11 @@ async function main() {
         });
     }
 
-    console.log(`\n📊 ${rows.length} kept, ${skippedDate} outside date range, ${skippedCoords} missing coords`);
+    console.log(`\n📊 ${rows.length} kept, ${skippedDate} too old, ${skippedDateNull} unparseable date, ${skippedCoords} missing coords`);
 
     if (rows.length === 0) {
-        console.error('❌ No valid records to insert after filtering.');
-        process.exit(1);
+        console.warn('⚠️  No valid records to insert after filtering. Exiting cleanly.');
+        process.exit(0);
     }
 
     // 3. Clear old data
