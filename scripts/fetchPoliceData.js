@@ -155,27 +155,28 @@ async function main() {
     }
     console.log('');
 
-    // 3. Transform — keep all records with valid coordinates (no date filter)
+    // 3. Transform — keep records from 2024+ with valid coordinates
+    const DATE_CUTOFF = '2024-01-01';
     const rows = [];
     let skippedCoords = 0;
+    let skippedDate = 0;
 
     for (const rec of records) {
-        const lat = parseFloat(rec.LAT);
-        const lng = parseFloat(rec.LONG);
+        // Date filter: OCC_DATE is a YYYY-MM-DD string
+        const occDate = rec.OCC_DATE || '';
+        if (occDate < DATE_CUTOFF) { skippedDate++; continue; }
+
+        const lat = parseFloat(rec.LAT_WGS84);
+        const lng = parseFloat(rec.LONG_WGS84);
         if (!lat || !lng || !isFinite(lat) || !isFinite(lng)) {
             skippedCoords++;
             continue;
         }
 
-        // Try to get a date — use it if available, otherwise null
-        const dateISO = toISODate(rec.OCC_DATE)
-            || toISODate(rec.REPORT_DATE)
-            || toISODate(rec.occ_date)
-            || toISODate(rec.report_date)
-            || null;
+        const dateISO = toISODate(occDate);
 
         rows.push({
-            crime_type: rec.MCI_CATEGORY || 'Unknown',
+            crime_type: rec.CSI_CATEGORY || 'Unknown',
             lat,
             lng,
             date_reported: dateISO,
@@ -187,7 +188,7 @@ async function main() {
         });
     }
 
-    console.log(`📊 ${rows.length} records with valid coords, ${skippedCoords} skipped (missing coords)`);
+    console.log(`📊 ${rows.length} kept, ${skippedDate} before ${DATE_CUTOFF}, ${skippedCoords} missing coords`);
 
     if (rows.length === 0) {
         console.error('❌ Zero valid records to insert — all records had missing coordinates.');
