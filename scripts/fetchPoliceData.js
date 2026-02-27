@@ -27,11 +27,20 @@ if (!SUPABASE_URL || !SERVICE_KEY) {
 const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
 
 // ─── ArcGIS Endpoints ───────────────────────────────────
-const MCI_URL =
-    'https://services.arcgis.com/S9th0jAJ7bqgIRjw/arcgis/rest/services/MCI_2014_to_Present/FeatureServer/0/query?where=1%3D1&outFields=*&resultRecordCount=1000&orderByFields=OCC_DATE+DESC&f=json';
+function buildArcGISUrl(service, recordCount) {
+    const base = `https://services.arcgis.com/S9th0jAJ7bqgIRjw/arcgis/rest/services/${service}/FeatureServer/0/query`;
+    const params = new URLSearchParams({
+        where: '1=1',
+        outFields: '*',
+        resultRecordCount: String(recordCount),
+        orderByFields: 'OCC_DATE DESC',
+        f: 'json',
+    });
+    return `${base}?${params.toString()}`;
+}
 
-const SHOOTINGS_URL =
-    'https://services.arcgis.com/S9th0jAJ7bqgIRjw/arcgis/rest/services/Shootings_and_Firearm_Discharges/FeatureServer/0/query?where=1%3D1&outFields=*&resultRecordCount=500&orderByFields=OCC_DATE+DESC&f=json';
+const MCI_URL = buildArcGISUrl('MCI_2014_to_Present', 1000);
+const SHOOTINGS_URL = buildArcGISUrl('Shootings_and_Firearm_Discharges', 500);
 
 // ─── Crime Type Normalization ───────────────────────────
 const MCI_CATEGORY_MAP = {
