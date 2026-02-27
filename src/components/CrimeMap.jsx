@@ -1,13 +1,17 @@
 /**
  * CrimeMap Component
- * 
+ *
  * Interactive Leaflet map centered on the Greater Toronto Area.
  * Renders crime markers with:
  * - Color-coded custom div icons by crime type
  * - MarkerClusterGroup for pin clustering
  * - Popup with crime details on click
+ * - User location marker with pulsing animation
+ * - Radius circle overlay
+ * - "Center on my location" button
  */
-import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
+import { useEffect, useRef } from 'react';
+import { MapContainer, TileLayer, Marker, Popup, Circle, useMap } from 'react-leaflet';
 import MarkerClusterGroup from 'react-leaflet-cluster';
 import L from 'leaflet';
 import CrimePopup from './CrimePopup';
@@ -50,6 +54,20 @@ function createCrimeIcon(crimeType) {
 }
 
 /**
+ * "You are here" pulsing blue marker icon.
+ */
+const userLocationIcon = L.divIcon({
+    className: 'user-location-marker',
+    html: `
+    <div class="user-marker__dot"></div>
+    <div class="user-marker__pulse"></div>
+    <div class="user-marker__pulse user-marker__pulse--delayed"></div>
+  `,
+    iconSize: [24, 24],
+    iconAnchor: [12, 12],
+});
+
+/**
  * Custom cluster icon that shows the count with a gradient.
  */
 function createClusterIcon(cluster) {
@@ -65,7 +83,37 @@ function createClusterIcon(cluster) {
     });
 }
 
-export default function CrimeMap({ crimes }) {
+/**
+ * Inner component to center map on user location when it becomes available.
+ * Also provides the "center on me" button control.
+ */
+function MapController({ userLocation, mapRef }) {
+    const map = useMap();
+
+    // Store map reference for external use
+    useEffect(() => {
+        if (mapRef) mapRef.current = map;
+    }, [map, mapRef]);
+
+    // Center on user location once when it first becomes available
+    useEffect(() => {
+        if (userLocation) {
+            map.setView([userLocation.lat, userLocation.lng], 13, { animate: true });
+        }
+    }, [userLocation]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    return null;
+}
+
+export default function CrimeMap({ crimes, userLocation, radiusKm }) {
+    const mapRef = useRef(null);
+
+    const handleCenterOnUser = () => {
+        if (userLocation && mapRef.current) {
+            mapRef.current.setView([userLocation.lat, userLocation.lng], 14, { animate: true });
+        }
+    };
+
     return (
         <div className="crime-map">
             <MapContainer
@@ -74,11 +122,42 @@ export default function CrimeMap({ crimes }) {
                 className="crime-map__container"
                 zoomControl={false}
             >
+                <MapController userLocation={userLocation} mapRef={mapRef} />
+
                 {/* Dark-themed CartoDB tiles */}
                 <TileLayer
                     attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/">CARTO</a>'
                     url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
                 />
+
+                {/* User location marker + radius circle */}
+                {userLocation && (
+                    <>
+                        <Marker
+                            position={[userLocation.lat, userLocation.lng]}
+                            icon={userLocationIcon}
+                            zIndexOffset={1000}
+                        >
+                            <Popup className="crime-popup-wrapper">
+                                <div className="crime-popup" style={{ textAlign: 'center' }}>
+                                    <span style={{ fontSize: '1.5rem' }}>📍</span>
+                                    <p style={{ marginTop: 4, fontWeight: 600 }}>You are here</p>
+                                </div>
+                            </Popup>
+                        </Marker>
+                        <Circle
+                            center={[userLocation.lat, userLocation.lng]}
+                            radius={radiusKm * 1000}
+                            pathOptions={{
+                                color: '#60a5fa',
+                                fillColor: '#60a5fa',
+                                fillOpacity: 0.06,
+                                weight: 1.5,
+                                dashArray: '6 4',
+                            }}
+                        />
+                    </>
+                )}
 
                 {/* Clustered crime markers */}
                 <MarkerClusterGroup
@@ -104,6 +183,24 @@ export default function CrimeMap({ crimes }) {
                         ))}
                 </MarkerClusterGroup>
             </MapContainer>
+
+            {/* Center on my location button */}
+            {userLocation && (
+                <button
+                    className="center-on-me"
+                    onClick={handleCenterOnUser}
+                    title="Center on my location"
+                    aria-label="Center on my location"
+                >
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <circle cx="12" cy="12" r="3" />
+                        <line x1="12" y1="2" x2="12" y2="6" />
+                        <line x1="12" y1="18" x2="12" y2="22" />
+                        <line x1="2" y1="12" x2="6" y2="12" />
+                        <line x1="18" y1="12" x2="22" y2="12" />
+                    </svg>
+                </button>
+            )}
         </div>
     );
 }

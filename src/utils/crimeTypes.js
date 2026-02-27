@@ -46,3 +46,33 @@ export const CRIME_TYPE_KEYS = Object.keys(CRIME_TYPES);
 export function getCrimeColor(crimeType) {
     return CRIME_TYPES[crimeType]?.color ?? '#6b7280';
 }
+
+/**
+ * Maps ArcGIS MCI_CATEGORY values to our normalized crime type keys.
+ * Used by the data ingestion script.
+ */
+const MCI_CATEGORY_MAP = {
+    'Assault': 'Assault',
+    'Robbery': 'Theft',
+    'Break and Enter': 'Break & Enter',
+    'Auto Theft': 'Auto Theft',
+    'Theft Over': 'Theft',
+    'Homicide': 'Assault',
+    'Shooting': 'Shooting',
+};
+
+/**
+ * Normalize an ArcGIS MCI_CATEGORY string to one of our 5 crime types.
+ */
+export function normalizeCrimeType(mciCategory) {
+    if (!mciCategory) return 'Theft';
+    if (MCI_CATEGORY_MAP[mciCategory]) return MCI_CATEGORY_MAP[mciCategory];
+    const lower = mciCategory.toLowerCase();
+    if (lower.includes('assault')) return 'Assault';
+    if (lower.includes('robbery') || lower.includes('theft')) return 'Theft';
+    if (lower.includes('break') || lower.includes('enter')) return 'Break & Enter';
+    if (lower.includes('auto')) return 'Auto Theft';
+    if (lower.includes('shoot') || lower.includes('firearm')) return 'Shooting';
+    if (lower.includes('homicide')) return 'Assault';
+    return 'Theft';
+}

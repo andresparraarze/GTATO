@@ -1,13 +1,15 @@
 /**
  * Sidebar Component
- * 
+ *
  * Filter panel with:
  * - Crime type checkboxes (colored indicators)
  * - Date range picker (from/to)
+ * - Proximity section (radius selector + nearby count)
  * - Reset filters button
  * - Crime count summary
  */
 import { CRIME_TYPES, CRIME_TYPE_KEYS } from '../utils/crimeTypes';
+import { RADIUS_OPTIONS } from '../utils/geo';
 
 export default function Sidebar({
     selectedTypes,
@@ -21,6 +23,12 @@ export default function Sidebar({
     loading,
     isOpen,
     onToggle,
+    /* Location props */
+    userLocation,
+    locationError,
+    radiusKm,
+    onRadiusChange,
+    nearbyCrimeCount,
 }) {
     /** Toggle a single crime type in the selected set */
     const handleTypeToggle = (type) => {
@@ -72,6 +80,46 @@ export default function Sidebar({
                             <span className="sidebar__count-number">{crimeCount}</span>
                             <span className="sidebar__count-label">incidents shown</span>
                         </>
+                    )}
+                </div>
+
+                {/* ── Proximity Section ────────────────────── */}
+                <div className="sidebar__section sidebar__proximity">
+                    <h2 className="sidebar__section-title">📍 Proximity</h2>
+
+                    {userLocation ? (
+                        <>
+                            {/* Nearby count */}
+                            <div className="proximity__count">
+                                <span className="proximity__count-number">{nearbyCrimeCount}</span>
+                                <span className="proximity__count-label">
+                                    incidents within {radiusKm}km
+                                </span>
+                            </div>
+
+                            {/* Radius selector */}
+                            <div className="proximity__radius">
+                                <span className="proximity__radius-label">Radius</span>
+                                <div className="proximity__options">
+                                    {RADIUS_OPTIONS.map((r) => (
+                                        <button
+                                            key={r}
+                                            className={`proximity__option ${radiusKm === r ? 'proximity__option--active' : ''}`}
+                                            onClick={() => onRadiusChange(r)}
+                                        >
+                                            {r}km
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        </>
+                    ) : (
+                        <div className="proximity__fallback">
+                            <span className="proximity__fallback-icon">🔒</span>
+                            <p className="proximity__fallback-text">
+                                {locationError || 'Enable location for personalized view'}
+                            </p>
+                        </div>
                     )}
                 </div>
 
