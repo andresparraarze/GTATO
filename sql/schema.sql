@@ -11,13 +11,14 @@ CREATE TABLE IF NOT EXISTS crimes (
   id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   crime_type    TEXT NOT NULL,
   date_reported TIMESTAMPTZ NOT NULL,
-  latitude      FLOAT8 NOT NULL,
-  longitude     FLOAT8 NOT NULL,
+  lat           FLOAT8 NOT NULL,
+  lng           FLOAT8 NOT NULL,
   address       TEXT,
   neighbourhood TEXT,
   description   TEXT,
   source_url    TEXT,
-  created_at    TIMESTAMPTZ DEFAULT NOW()
+  created_at    TIMESTAMPTZ DEFAULT NOW(),
+  last_updated  TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- 3. Indexes for common filter queries

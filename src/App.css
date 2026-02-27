@@ -142,6 +142,43 @@
   letter-spacing: 0.04em;
 }
 
+/* Data Freshness */
+.sidebar__freshness {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 24px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.sidebar__freshness-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #22c55e;
+  box-shadow: 0 0 6px rgba(34, 197, 94, 0.5);
+  animation: freshness-pulse 2s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+@keyframes freshness-pulse {
+
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.4;
+  }
+}
+
+.sidebar__freshness-text {
+  font-size: 0.7rem;
+  color: rgba(255, 255, 255, 0.4);
+  letter-spacing: 0.02em;
+}
+
 /* Sections */
 .sidebar__section {
   padding: 20px 24px;

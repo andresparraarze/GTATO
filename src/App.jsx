@@ -34,7 +34,7 @@ function App() {
   }), [selectedTypes, dateFrom, dateTo]);
 
   // Fetch crimes from Supabase with filters
-  const { crimes, loading, error } = useCrimes(filters);
+  const { crimes, loading, error, lastUpdated } = useCrimes(filters);
 
   // Compute nearby crime count
   const nearbyCrimeCount = useMemo(() => {
@@ -70,6 +70,7 @@ function App() {
         radiusKm={radiusKm}
         onRadiusChange={setRadiusKm}
         nearbyCrimeCount={nearbyCrimeCount}
+        lastUpdated={lastUpdated}
       />
 
       <main className={`app__main ${sidebarOpen ? '' : 'app__main--expanded'}`}>

@@ -12,6 +12,7 @@ export function useCrimes(filters = {}) {
     const [crimes, setCrimes] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
+    const [lastUpdated, setLastUpdated] = useState(null);
 
     const { selectedTypes, dateFrom, dateTo } = filters;
 
@@ -57,6 +58,16 @@ export function useCrimes(filters = {}) {
             }
 
             setCrimes(data || []);
+
+            // Extract the most recent last_updated timestamp
+            if (data?.length > 0) {
+                const timestamps = data
+                    .map(d => d.last_updated)
+                    .filter(Boolean)
+                    .sort()
+                    .reverse();
+                if (timestamps.length > 0) setLastUpdated(timestamps[0]);
+            }
         } catch (err) {
             console.error('Error fetching crimes:', err);
             setError(err.message);
@@ -69,5 +80,5 @@ export function useCrimes(filters = {}) {
         fetchCrimes();
     }, [fetchCrimes]);
 
-    return { crimes, loading, error, refetch: fetchCrimes };
+    return { crimes, loading, error, lastUpdated, refetch: fetchCrimes };
 }

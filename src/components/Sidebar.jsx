@@ -29,7 +29,20 @@ export default function Sidebar({
     radiusKm,
     onRadiusChange,
     nearbyCrimeCount,
+    lastUpdated,
 }) {
+    /** Format a relative time string like "2 hours ago" */
+    const formatTimeAgo = (isoString) => {
+        if (!isoString) return null;
+        const diff = Date.now() - new Date(isoString).getTime();
+        const mins = Math.floor(diff / 60000);
+        if (mins < 1) return 'just now';
+        if (mins < 60) return `${mins}m ago`;
+        const hrs = Math.floor(mins / 60);
+        if (hrs < 24) return `${hrs}h ago`;
+        const days = Math.floor(hrs / 24);
+        return `${days}d ago`;
+    };
     /** Toggle a single crime type in the selected set */
     const handleTypeToggle = (type) => {
         if (selectedTypes.includes(type)) {
@@ -82,6 +95,16 @@ export default function Sidebar({
                         </>
                     )}
                 </div>
+
+                {/* Data freshness indicator */}
+                {lastUpdated && (
+                    <div className="sidebar__freshness">
+                        <span className="sidebar__freshness-dot" />
+                        <span className="sidebar__freshness-text">
+                            Updated {formatTimeAgo(lastUpdated)}
+                        </span>
+                    </div>
+                )}
 
                 {/* ── Proximity Section ────────────────────── */}
                 <div className="sidebar__section sidebar__proximity">

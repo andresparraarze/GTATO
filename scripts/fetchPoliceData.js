@@ -31,25 +31,37 @@ if (!SUPABASE_URL || !SERVICE_KEY) {
 
 const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
 
+// ── Dynamic Date Filter (last 90 days) ────────────────────
+const DAYS_BACK = 90;
+const cutoffDate = new Date();
+cutoffDate.setDate(cutoffDate.getDate() - DAYS_BACK);
+// ArcGIS date format: epoch milliseconds
+const cutoffEpoch = cutoffDate.getTime();
+const dateWhere = encodeURIComponent(`OCC_DATE >= ${cutoffEpoch}`);
+
+console.log(`📅 Date filter: last ${DAYS_BACK} days (since ${cutoffDate.toISOString().split('T')[0]})`);
+
 // ── ArcGIS Query URLs ─────────────────────────────────────
-// Correct service names from: services.arcgis.com/S9th0jAJ7bqgIRjw/arcgis/rest/services?f=json
 const BASE = 'https://services.arcgis.com/S9th0jAJ7bqgIRjw/ArcGIS/rest/services';
 
 const MCI_QUERY_URL = `${BASE}/Major_Crime_Indicators_Open_Data/FeatureServer/0/query`
-    + '?where=1%3D1'
+    + `?where=${dateWhere}`
     + '&outFields=EVENT_UNIQUE_ID,OCC_DATE,CSI_CATEGORY,OFFENCE,LOCATION_TYPE,PREMISES_TYPE,NEIGHBOURHOOD_158,LAT_WGS84,LONG_WGS84'
-    + '&resultRecordCount=1000'
+    + '&resultRecordCount=2000'
     + '&orderByFields=OCC_DATE%20DESC'
     + '&outSR=4326'
     + '&f=json';
 
 const SHOOTINGS_QUERY_URL = `${BASE}/Shooting_and_Firearm_Discharges_Open_Data/FeatureServer/0/query`
-    + '?where=1%3D1'
+    + `?where=${dateWhere}`
     + '&outFields=*'
-    + '&resultRecordCount=500'
+    + '&resultRecordCount=1000'
     + '&orderByFields=OCC_DATE%20DESC'
     + '&outSR=4326'
     + '&f=json';
+
+// Timestamp for this ingestion run
+const NOW_ISO = new Date().toISOString();
 
 // ── Crime Type Mapping ────────────────────────────────────
 function normalizeCrimeType(category) {
@@ -114,6 +126,7 @@ async function main() {
             address: a.LOCATION_TYPE || a.PREMISES_TYPE || null,
             description: a.OFFENCE || a.CSI_CATEGORY || null,
             source_url: 'https://data.torontopolice.on.ca',
+            last_updated: NOW_ISO,
         });
     }
 
@@ -135,6 +148,7 @@ async function main() {
                 ? `Firearm discharge — ${a.INJURIES} injury(ies)`
                 : 'Firearm discharge',
             source_url: 'https://data.torontopolice.on.ca',
+            last_updated: NOW_ISO,
         });
     }
 
